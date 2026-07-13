@@ -62,8 +62,8 @@ jobs:
               ? `<code>${runCmd} ${esc(refs[0].replace(' -> ', ' '))}</code>`
               : `<code>${runCmd} &lt;eco&gt;:&lt;name&gt; &lt;from&gt; &lt;to&gt;</code>`;
             const footer =
-              `<sub>Reproduce: ${reproduce}`
-              + ` · <a href="https://github.com/rvagg/depsound">depsound</a>`
+              `<sub>Reproduce: ${reproduce}</sub>\n`
+              + `<sub><a href="https://github.com/rvagg/depsound">depsound</a>`
               + ` · <a href="${run.html_url}">full report + logs</a></sub>`;
             const withExtras = body.includes(marker)
               ? body.replace(marker, `${footer}\n${marker}`)
