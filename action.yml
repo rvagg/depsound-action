@@ -1,5 +1,5 @@
 name: depsound
-description: Run depsound on dependency changes and render a review comment. Evidence, never a verdict.
+description: Review dependency changes on a PR with depsound and upload the report. Evidence, never a verdict.
 author: Rod Vagg
 branding:
   icon: search
@@ -8,8 +8,9 @@ branding:
 inputs:
   deps:
     description: >
-      Newline-separated `<eco>:<name> <from> <to>` list to review, where eco is
-      one of npm, go, crates, gha. Empty means there is nothing to do.
+      Override: a newline-separated `<eco>:<name> <from> <to>` list to review
+      (eco is npm, go, crates, or gha). When empty, the list is derived from the
+      PR's Dependabot metadata.
     required: false
     default: ""
   depsound-version:
@@ -21,7 +22,7 @@ inputs:
     required: false
     default: ""
   github-token:
-    description: Token used to download the pinned depsound release.
+    description: Token used to read PR metadata and download the pinned depsound release.
     required: false
     default: ${{ github.token }}
 
@@ -39,6 +40,48 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Dependabot metadata
+      id: meta
+      if: ${{ inputs.deps == '' && github.actor == 'dependabot[bot]' }}
+      uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a # v2.5.0
+
+    - name: Resolve dependency list
+      id: deps
+      shell: bash
+      env:
+        DEPS_IN: ${{ inputs.deps }}
+        UPDATED: ${{ steps.meta.outputs.updated-dependencies-json }}
+      run: |
+        set -euo pipefail
+        # explicit deps input wins; otherwise map Dependabot's metadata to
+        # depsound's `<eco>:<name> <from> <to>`, dropping ecosystems depsound
+        # does not cover (pip, bundler, ...)
+        if [ -n "${DEPS_IN//[[:space:]]/}" ]; then
+          list="$DEPS_IN"
+        else
+          list=$(printf '%s' "${UPDATED:-[]}" | jq -r '
+            def eco: {
+              "npm":"npm","npm_and_yarn":"npm",
+              "gomod":"go","go_modules":"go",
+              "cargo":"crates",
+              "github-actions":"gha","github_actions":"gha"
+            }[.];
+            # gha tags are v-prefixed but Dependabot reports bare versions
+            def vfix($e): if $e == "gha" and (startswith("v")|not) then "v"+. else . end;
+            .[]
+            | ((.packageEcosystem // "") | eco) as $e
+            | select($e != null
+                and .prevVersion and .newVersion
+                and .prevVersion != "" and .newVersion != "")
+            | "\($e):\(.dependencyName) \(.prevVersion|vfix($e)) \(.newVersion|vfix($e))"
+          ')
+        fi
+        {
+          echo "list<<__DEPS__"
+          echo "$list"
+          echo "__DEPS__"
+        } >> "$GITHUB_OUTPUT"
+
     - name: Download and verify depsound
       shell: bash
       env:
@@ -71,7 +114,7 @@ runs:
       id: run
       shell: bash
       env:
-        DEPS: ${{ inputs.deps }}
+        DEPS: ${{ steps.deps.outputs.list }}
         COOLDOWN: ${{ inputs.cooldown }}
       run: |
         set -euo pipefail

@@ -23,40 +23,55 @@ Because depsound fetches the *published* artifact and its output is reproducible
 from public registry data, there is nothing to host: the report lives in the PR
 and the workspace regenerates on demand.
 
-## How it fits together
-
-depsound owns the wording: the human-facing comment body is rendered by depsound,
-not by this action. The action is thin plumbing, download the pinned depsound
-binary, run it, post the result, which keeps the review logic in one place and
-this action small. What it posts are dimensional facts and a neutral check,
-never a grade and never "safe".
-
 ## Usage
 
-Because Dependabot and fork PRs get a read-only token with no secrets, review
-splits into two workflows: a **compute** job on `pull_request` (read-only,
-uploads the report as an artifact) and a **post** job on `workflow_run` (holds
-the write token, downloads the artifact, upserts the sticky comment, sets the
-neutral check). Copy both from [`examples/`](examples/) into your
+Review is two workflows, and this action is two matching pieces, so each
+workflow is a single `uses:`. Copy both from [`examples/`](examples/) into your
 `.github/workflows/`:
 
-- [`examples/depsound.yml`](examples/depsound.yml) — compute
-- [`examples/depsound-post.yml`](examples/depsound-post.yml) — post
+- [`examples/depsound.yml`](examples/depsound.yml) — `uses: rvagg/depsound-action`
+- [`examples/depsound-post.yml`](examples/depsound-post.yml) — `uses: rvagg/depsound-action/post`
 
-The compute job derives the changed dependencies from Dependabot's metadata and
-hands them to this action; adapt its "Build dependency list" step if you drive
-updates another way.
+The compute action reads Dependabot's metadata itself, so for the common case
+there is nothing to configure; pin the two `uses:` to a SHA (see Pinning) and
+you are done. To drive it from something other than Dependabot, pass a `deps`
+override (see Inputs).
+
+### Why two workflows
+
+Dependabot and fork PRs run with a **read-only** `GITHUB_TOKEN` and no access to
+secrets, so a job on `pull_request` cannot post a comment or set a check on
+those PRs, exactly the PRs that most need reviewing. The fix is to split the
+work by the token each half needs:
+
+- **compute** runs on `pull_request` with read-only permissions. It works out
+  the changed dependencies, runs depsound, and uploads the report as an
+  artifact. It never posts, so it never needs write access, and it is safe to
+  run on untrusted PR code (it does not run that code anyway; depsound analyzes
+  the *published* artifact, not the branch).
+- **post** runs on `workflow_run`, which fires after compute finishes and runs
+  in the base repo's context with the **write** token. It only downloads the
+  report artifact (data) and posts it; it never checks out or runs any PR code.
+
+That separation is what keeps a write token away from untrusted code while still
+letting the comment land on Dependabot and fork PRs. It is the standard, safe
+`workflow_run` pattern, not a workaround.
 
 ## Inputs
 
+The compute action ([`rvagg/depsound-action`](action.yml)):
+
 | Input | Purpose |
 |---|---|
-| `deps` | newline `<eco>:<name> <from> <to>` list to review (the compute workflow builds this) |
+| `deps` | override: newline `<eco>:<name> <from> <to>` list to review; when empty it is derived from the PR's Dependabot metadata |
 | `depsound-version` | the depsound release to download and checksum-verify (default `v0.23.3`) |
 | `cooldown` | days, forwarded to depsound `--cooldown` to match an install cooldown |
-| `github-token` | token to download the release (defaults to the job token) |
+| `github-token` | token to read PR metadata and download the release (defaults to the job token) |
 
 Outputs: `markdown` (the comment body), `title` (the check title), `tripped`.
+
+The post action ([`rvagg/depsound-action/post`](post/action.yml)) takes only an
+optional `github-token` (defaults to the job token).
 
 ## Pinning
 
@@ -71,7 +86,7 @@ The action downloads a pinned depsound release and verifies it against the
 release's own checksums, which catches a corrupted download though it is not an
 independent anchor against a compromised release. It never checks out or runs
 the PR's code: depsound analyzes the *published* artifact, not the branch. The
-post workflow only downloads the report artifact (data) and posts it, which is
+post action only downloads the report artifact (data) and posts it, which is
 what keeps its write token safe.
 
 ## License

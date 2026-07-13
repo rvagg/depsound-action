@@ -1,12 +1,6 @@
-# depsound dogfooding: reviews this repo's own dependency-update PRs. The
-# copyable template for other repos is in examples/depsound.yml.
-#
-# This is the COMPUTE half. It runs on every PR, including Dependabot and fork
-# PRs, with READ-ONLY permissions, works out the changed dependencies, runs
-# depsound, and uploads the report as an artifact. It never posts, because
-# Dependabot and fork PRs get a read-only token with no secrets. The companion
-# depsound-post.yml posts the report from a workflow_run job that holds the
-# write token.
+# depsound dogfooding, the COMPUTE half: reviews this repo's own
+# dependency-update PRs. The copyable template for other repos is in
+# examples/depsound.yml.
 name: depsound
 on:
   pull_request:
@@ -19,45 +13,4 @@ jobs:
   review:
     runs-on: ubuntu-latest
     steps:
-      - name: Dependabot metadata
-        id: meta
-        if: ${{ github.actor == 'dependabot[bot]' }}
-        uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a # v2.5.0
-
-      - name: Build dependency list
-        id: deps
-        shell: bash
-        env:
-          UPDATED: ${{ steps.meta.outputs.updated-dependencies-json }}
-        run: |
-          set -euo pipefail
-          # map Dependabot ecosystems to depsound's and emit one
-          # `<eco>:<name> <from> <to>` per changed dependency; ecosystems
-          # depsound does not cover (pip, bundler, ...) are dropped
-          list=$(printf '%s' "${UPDATED:-[]}" | jq -r '
-            def eco: {
-              "npm":"npm","npm_and_yarn":"npm",
-              "gomod":"go","go_modules":"go",
-              "cargo":"crates",
-              "github-actions":"gha","github_actions":"gha"
-            }[.];
-            # gha tags are v-prefixed but Dependabot reports bare versions
-            def vfix($e): if $e == "gha" and (startswith("v")|not) then "v"+. else . end;
-            .[]
-            | ((.packageEcosystem // "") | eco) as $e
-            | select($e != null
-                and .prevVersion and .newVersion
-                and .prevVersion != "" and .newVersion != "")
-            | "\($e):\(.dependencyName) \(.prevVersion|vfix($e)) \(.newVersion|vfix($e))"
-          ')
-          {
-            echo "list<<__DEPS__"
-            echo "$list"
-            echo "__DEPS__"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: depsound
-        uses: rvagg/depsound-action@577e15a7453745372b753e1a42d689aa1d375ccc # v0.1.0
-        with:
-          deps: ${{ steps.deps.outputs.list }}
-          depsound-version: v0.23.3
+      - uses: rvagg/depsound-action@master

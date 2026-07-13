@@ -1,11 +1,11 @@
 # Copy into .github/workflows/ of the repo you want reviewed, alongside
-# depsound.yml.
+# depsound.yml. Review needs two workflows; the README explains why.
 #
-# This is the POST half. It runs AFTER depsound.yml completes, in a
-# workflow_run context that carries the repository's write token (so it works
-# even for Dependabot and fork PRs, whose own token is read-only). It only
-# downloads the report ARTIFACT (data) and posts it: it never checks out or
-# runs any PR code, which is what keeps the write token safe here.
+# This one POSTS: it runs after depsound.yml completes, downloads the report
+# ARTIFACT, and upserts the sticky comment + neutral check. It runs in a
+# workflow_run context that carries the repo's write token (so it works even
+# for Dependabot and fork PRs, whose own token is read-only), and it never
+# checks out or runs any PR code, which is what keeps that token safe.
 name: depsound-post
 on:
   workflow_run:
@@ -15,86 +15,11 @@ on:
 permissions:
   pull-requests: write # upsert the sticky comment
   checks: write        # set the neutral check
-  actions: read        # download the artifact from the triggering run
+  actions: read        # download the report artifact from the compute run
 
 jobs:
   post:
     runs-on: ubuntu-latest
     if: ${{ github.event.workflow_run.event == 'pull_request' }}
     steps:
-      - name: Download report
-        continue-on-error: true # no artifact = no dependency changes = nothing to post
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: depsound-report
-          path: report
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ github.token }}
-
-      - name: Upsert comment and set check
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
-        with:
-          script: |
-            const fs = require('fs');
-            let meta, body;
-            try {
-              meta = JSON.parse(fs.readFileSync('report/meta.json', 'utf8'));
-              body = fs.readFileSync('report/comment.md', 'utf8');
-            } catch (e) {
-              core.info('no depsound report to post');
-              return;
-            }
-            const { owner, repo } = context.repo;
-            const run = context.payload.workflow_run;
-
-            // depsound owns the wording; the poster adds the consumption chrome:
-            // how to run depsound yourself, plus the run-specific links
-            const marker = '<!-- depsound -->';
-            const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-            // report refs are "<spec> <from> -> <to>"; a single-dep PR gets a
-            // copy-paste reproduce, a group keeps the generic placeholder
-            let refs = [];
-            try {
-              refs = JSON.parse(fs.readFileSync('report/report.json', 'utf8')).map(r => r.ref).filter(Boolean);
-            } catch (e) { /* no report.json: fall back to the placeholder */ }
-            const runCmd = 'go run github.com/rvagg/depsound/cmd/depsound@latest';
-            const reproduce = refs.length === 1
-              ? `<code>${runCmd} ${esc(refs[0].replace(' -> ', ' '))}</code>`
-              : `<code>${runCmd} &lt;eco&gt;:&lt;name&gt; &lt;from&gt; &lt;to&gt;</code>`;
-            const footer =
-              `<sub>Reproduce locally with agent-friendly output:</sub>\n`
-              + `<blockquote><sub>${reproduce}</sub></blockquote>\n`
-              + `<sub><a href="https://github.com/rvagg/depsound">depsound</a>`
-              + ` · <a href="${run.html_url}">full report + logs</a></sub>`;
-            const withExtras = body.includes(marker)
-              ? body.replace(marker, `${footer}\n${marker}`)
-              : `${body}\n${footer}\n${marker}`;
-
-            // neutral check on the PR head: the check is the gate, the comment is the voice
-            await github.rest.checks.create({
-              owner, repo,
-              name: 'depsound',
-              head_sha: run.head_sha,
-              status: 'completed',
-              conclusion: 'neutral',
-              output: {
-                title: meta.title || 'depsound',
-                summary: meta.title || 'depsound dependency review',
-              },
-            });
-
-            const pr = Number(meta.pr);
-            if (!pr) {
-              core.info('no PR number in report; posted the check only');
-              return;
-            }
-            // sticky upsert: find our marked comment and edit in place, else create
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              owner, repo, issue_number: pr, per_page: 100,
-            });
-            const existing = comments.find(c => c.body && c.body.includes(marker));
-            if (existing) {
-              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body: withExtras });
-            } else {
-              await github.rest.issues.createComment({ owner, repo, issue_number: pr, body: withExtras });
-            }
+      - uses: rvagg/depsound-action/post@master # pin a commit SHA (see Pinning)
