@@ -60,4 +60,4 @@ jobs:
         uses: rvagg/depsound-action@577e15a7453745372b753e1a42d689aa1d375ccc # v0.1.0
         with:
           deps: ${{ steps.deps.outputs.list }}
-          depsound-version: v0.23.1
+          depsound-version: v0.23.2
