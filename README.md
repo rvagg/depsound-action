@@ -52,7 +52,7 @@ updates another way.
 | Input | Purpose |
 |---|---|
 | `deps` | newline `<eco>:<name> <from> <to>` list to review (the compute workflow builds this) |
-| `depsound-version` | the depsound release to download and checksum-verify (default `v0.23.2`) |
+| `depsound-version` | the depsound release to download and checksum-verify (default `v0.23.3`) |
 | `cooldown` | days, forwarded to depsound `--cooldown` to match an install cooldown |
 | `github-token` | token to download the release (defaults to the job token) |
 
