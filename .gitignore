@@ -1,0 +1,4 @@
+# depsound binary downloaded during local testing
+/depsound
+*.tmp
+.DS_Store

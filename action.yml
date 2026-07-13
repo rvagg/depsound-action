@@ -1,0 +1,109 @@
+name: depsound
+description: Run depsound on dependency changes and render a review comment. Evidence, never a verdict.
+author: Rod Vagg
+branding:
+  icon: search
+  color: purple
+
+inputs:
+  deps:
+    description: >
+      Newline-separated `<eco>:<name> <from> <to>` list to review, where eco is
+      one of npm, go, crates, gha. Empty means there is nothing to do.
+    required: false
+    default: ""
+  depsound-version:
+    description: The depsound release tag to download and pin.
+    required: false
+    default: v0.23.0
+  cooldown:
+    description: Days, forwarded to depsound --cooldown to match an install cooldown.
+    required: false
+    default: ""
+  github-token:
+    description: Token used to download the pinned depsound release.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  markdown:
+    description: The PR-comment markdown body rendered by depsound.
+    value: ${{ steps.run.outputs.markdown }}
+  title:
+    description: One-line check title.
+    value: ${{ steps.run.outputs.title }}
+  tripped:
+    description: "true unless the headline reads 'no signals tripped'."
+    value: ${{ steps.run.outputs.tripped }}
+
+runs:
+  using: composite
+  steps:
+    - name: Download and verify depsound
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        VERSION: ${{ inputs.depsound-version }}
+      run: |
+        set -euo pipefail
+        os=$(uname -s | tr '[:upper:]' '[:lower:]')
+        arch=$(uname -m)
+        case "$arch" in x86_64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; esac
+        ver="${VERSION#v}"
+        case "$os" in
+          linux)  asset="depsound_${ver}_linux_${arch}.tar.gz" ;;
+          darwin) asset="depsound_${ver}_darwin_all.zip" ;;
+          *) echo "::error::unsupported runner OS: $os" ; exit 1 ;;
+        esac
+        dir="$RUNNER_TEMP/depsound-bin"
+        mkdir -p "$dir"
+        gh release download "$VERSION" --repo rvagg/depsound --dir "$dir" \
+          --pattern "$asset" --pattern checksums.txt --clobber
+        # verify against the release's own checksums: a corrupt-download check,
+        # not an independent anchor against a compromised release
+        ( cd "$dir"
+          if command -v sha256sum >/dev/null; then verify="sha256sum -c -"; else verify="shasum -a 256 -c -"; fi
+          grep " ${asset}\$" checksums.txt | $verify )
+        ( cd "$dir" && case "$asset" in *.zip) unzip -oq "$asset" ;; *) tar xzf "$asset" ;; esac )
+        echo "$dir" >> "$GITHUB_PATH"
+
+    - name: Run depsound
+      id: run
+      shell: bash
+      env:
+        DEPS: ${{ inputs.deps }}
+        COOLDOWN: ${{ inputs.cooldown }}
+      run: |
+        set -euo pipefail
+        if [ -z "${DEPS//[[:space:]]/}" ]; then
+          echo "no dependency changes to review"
+          echo "tripped=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        out="$RUNNER_TEMP/depsound-report"
+        mkdir -p "$out"
+        common=(bulk)
+        [ -n "$COOLDOWN" ] && common+=("--cooldown=$COOLDOWN")
+        printf '%s\n' "$DEPS" | depsound "${common[@]}" --format=markdown > "$out/comment.md"
+        printf '%s\n' "$DEPS" | depsound "${common[@]}" --format=json > "$out/report.json"
+        title=$(sed -n 's/^<!-- depsound-title: \(.*\) -->$/\1/p' "$out/comment.md" | head -1)
+        if grep -q 'no signals tripped' "$out/comment.md"; then tripped=false; else tripped=true; fi
+        pr=$(jq -r '.pull_request.number // empty' "$GITHUB_EVENT_PATH")
+        jq -n --arg pr "$pr" --arg title "$title" --argjson tripped "$tripped" \
+          '{pr: $pr, title: $title, tripped: $tripped}' > "$out/meta.json"
+        {
+          echo "title=$title"
+          echo "tripped=$tripped"
+          echo "report-dir=$out"
+          echo "markdown<<__DEPSOUND_MD__"
+          cat "$out/comment.md"
+          echo "__DEPSOUND_MD__"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Upload report
+      if: ${{ steps.run.outputs.report-dir != '' }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: depsound-report
+        path: ${{ steps.run.outputs.report-dir }}
+        if-no-files-found: ignore
