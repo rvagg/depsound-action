@@ -1,7 +1,9 @@
 version: 2
 updates:
   - package-ecosystem: github-actions
-    directory: /
+    directories:
+      - / # workflows + the root compute action.yml
+      - /post # the post composite action.yml
     schedule:
       interval: monthly
     cooldown:
