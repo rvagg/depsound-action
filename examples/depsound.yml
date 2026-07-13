@@ -40,13 +40,15 @@ jobs:
               "cargo":"crates",
               "github-actions":"gha","github_actions":"gha"
             }[.];
+            # gha tags are v-prefixed but Dependabot reports bare versions
+            def vfix($e): if $e == "gha" and (startswith("v")|not) then "v"+. else . end;
             .[]
-            | (.["package-ecosystem"] | eco) as $e
+            | ((.packageEcosystem // "") | eco) as $e
             | select($e != null
-                and .["previous-version"] and .["new-version"]
-                and .["previous-version"] != "" and .["new-version"] != "")
-            | "\($e):\(.["dependency-name"]) \(.["previous-version"]) \(.["new-version"])"
-          ' || true)
+                and .prevVersion and .newVersion
+                and .prevVersion != "" and .newVersion != "")
+            | "\($e):\(.dependencyName) \(.prevVersion|vfix($e)) \(.newVersion|vfix($e))"
+          ')
           {
             echo "list<<__DEPS__"
             echo "$list"
