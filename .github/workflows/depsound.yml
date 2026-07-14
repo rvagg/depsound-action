@@ -6,8 +6,7 @@ on:
   pull_request:
 
 permissions:
-  contents: read
-  pull-requests: read
+  contents: read # checkout + diff the PR's manifests; no write, never posts
 
 jobs:
   review:

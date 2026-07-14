@@ -1,7 +1,7 @@
 # depsound-action
 
-A GitHub Action that runs [depsound](https://github.com/rvagg/depsound) on
-dependency-update pull requests and reports what it found, so a human or an
+A GitHub Action that runs [depsound](https://github.com/rvagg/depsound) on pull
+requests that change a dependency and reports what it found, so a human or an
 agent can review straight from the PR without installing anything.
 
 Like depsound itself, this is **evidence, not a verdict**. It surfaces facts and
@@ -9,9 +9,12 @@ routes the next step; it never claims a change is "safe".
 
 ## What it does
 
-On a Dependabot dependency-update PR it:
+On any PR that touches a dependency manifest (Dependabot's, a teammate's, or a
+newcomer's) it:
 
-- resolves the changed dependencies and runs depsound over them;
+- diffs the changed manifests to work out what actually moved, a version bump, a
+  newly-added dependency, or a `replace`/redirect off the registry, and runs
+  depsound over them;
 - upserts a single **sticky comment** (one per PR, edited in place across
   rebases) with a plain-language headline and the signals worth weighing;
 - uploads the full depsound report as a workflow **artifact** for anyone, or any
@@ -32,10 +35,12 @@ workflow is a single `uses:`. Copy both from [`examples/`](examples/) into your
 - [`examples/depsound.yml`](examples/depsound.yml) — `uses: rvagg/depsound-action`
 - [`examples/depsound-post.yml`](examples/depsound-post.yml) — `uses: rvagg/depsound-action/post`
 
-The compute action reads Dependabot's metadata itself, so for the common case
-there is nothing to configure; pin the two `uses:` to a SHA (see Pinning) and
-you are done. To drive it from something other than Dependabot, pass a `deps`
-override (see Inputs).
+The compute action diffs the PR's dependency manifests itself, so a change to a
+watched manifest is reviewed no matter who opened the PR (not just Dependabot),
+and for the common case there is nothing to configure; pin the two `uses:` to a
+SHA (see Pinning) and you are done. Point it at non-standard manifest locations
+with `manifests`, or bypass detection entirely with an explicit `deps` list (see
+Inputs).
 
 ### Why two workflows
 
@@ -44,11 +49,12 @@ secrets, so a job on `pull_request` cannot post a comment or set a check on
 those PRs, exactly the PRs that most need reviewing. The fix is to split the
 work by the token each half needs:
 
-- **compute** runs on `pull_request` with read-only permissions. It works out
-  the changed dependencies, runs depsound, and uploads the report as an
-  artifact. It never posts, so it never needs write access, and it is safe to
-  run on untrusted PR code (it does not run that code anyway; depsound analyzes
-  the *published* artifact, not the branch).
+- **compute** runs on `pull_request` with read-only permissions. It checks out
+  the PR to diff its manifests, runs depsound, and uploads the report as an
+  artifact. It never posts, so it never needs write access. Checking out
+  untrusted PR code is safe here because it only *reads* the manifest text
+  (never runs the code), and depsound then fetches and analyzes the *published*
+  artifacts those manifests name, not the branch's contents.
 - **post** runs on `workflow_run`, which fires after compute finishes and runs
   in the base repo's context with the **write** token. It only downloads the
   report artifact (data) and posts it; it never checks out or runs any PR code.
@@ -63,10 +69,11 @@ The compute action ([`rvagg/depsound-action`](action.yml)):
 
 | Input | Purpose |
 |---|---|
-| `deps` | override: newline `<eco>:<name> <from> <to>` list to review; when empty it is derived from the PR's Dependabot metadata |
-| `depsound-version` | the depsound release to download and checksum-verify (default `v0.23.3`) |
+| `manifests` | newline list of manifest/lockfile **base names** to watch on a PR, matched at any path (default: `go.mod`, `package-lock.json`, `pnpm-lock.yaml`, `Cargo.lock`). A committed lockfile is watched in preference to its declaration file (`package.json`, `Cargo.toml`) because it pins exact + transitive versions. See [Current limitations](#current-limitations) for repos with no lockfile |
+| `deps` | override: a newline depsound list (`<eco>:<name> <from> <to>` bump, `<eco>:<name> <version>` new dep, or `redirect <eco>:<name> <target>`); when set, PR detection is skipped |
+| `depsound-version` | the depsound release to download and checksum-verify (default `v0.24.0`) |
 | `cooldown` | days, forwarded to depsound `--cooldown` to match an install cooldown |
-| `github-token` | token to read PR metadata and download the release (defaults to the job token) |
+| `github-token` | token to checkout the PR and download the release (defaults to the job token) |
 
 Outputs: `markdown` (the comment body), `title` (the check title), `tripped`.
 
@@ -80,14 +87,35 @@ pointer an attacker can re-point (the tj-actions vector); a SHA is immutable.
 This is depsound's own advice, so this repo and its examples follow it, and
 Dependabot keeps the SHAs (and their `# vX.Y.Z` comments) current.
 
+## Current limitations
+
+Detection reads a PR's authoritative resolution files, so it inherits their
+boundaries:
+
+- **No committed lockfile.** A repo that does not commit a lockfile (common for
+  npm and crates *libraries*) carries its dependency changes only in the
+  declaration file (`package.json`, `Cargo.toml`), which detection does not yet
+  read, so those changes are currently missed. Go is unaffected (`go.mod` is
+  always both declaration and resolution). A labelled declaration-file fallback
+  is planned.
+- **Redirects.** A `replace`/`patch`/override pointing a dependency off the
+  registry is flagged for **Go** today; npm/pnpm/crates redirect detection is a
+  follow-on.
+
+What depsound itself does not assess (reachability, runtime behaviour, your
+tests, transitive depth, publish provenance) is stated on every report.
+
 ## Security
 
 The action downloads a pinned depsound release and verifies it against the
 release's own checksums, which catches a corrupted download though it is not an
-independent anchor against a compromised release. It never checks out or runs
-the PR's code: depsound analyzes the *published* artifact, not the branch. The
-post action only downloads the report artifact (data) and posts it, which is
-what keeps its write token safe.
+independent anchor against a compromised release. The compute half checks out
+the PR to diff its manifests, but only *reads* the manifest text (attacker-
+controlled data, parsed for names and versions); it never runs the PR's code,
+and depsound analyzes the *published* artifacts those manifests name, not the
+branch. It runs with a read-only token and never posts. The post half holds the
+write token but only downloads the report artifact (data) and posts it, never
+touching PR code, which is what keeps that token safe.
 
 ## License
 

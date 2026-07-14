@@ -6,23 +6,39 @@ branding:
   color: purple
 
 inputs:
+  manifests:
+    description: >
+      Newline-separated manifest/lockfile BASE NAMES to watch on a PR, matched
+      at any path (monorepo nested files included). The defaults are the
+      per-ecosystem resolution files: a committed lockfile pins exact versions
+      and transitive deps, so it is watched in preference to the declaration
+      file (package.json / Cargo.toml). CAVEAT: a repo that commits NO lockfile
+      (common for npm and crates LIBRARIES) is not detected yet, its changes
+      live only in the declaration file, which detection does not read. go.mod
+      is always both declaration and resolution, so Go is unaffected.
+    required: false
+    default: |
+      go.mod
+      package-lock.json
+      pnpm-lock.yaml
+      Cargo.lock
   deps:
     description: >
-      Override: a newline-separated `<eco>:<name> <from> <to>` list to review
-      (eco is npm, go, crates, or gha). When empty, the list is derived from the
-      PR's Dependabot metadata.
+      Override: a newline-separated depsound list to review (`<eco>:<name> <from>
+      <to>` bump, `<eco>:<name> <version>` new dep, or `redirect <eco>:<name>
+      <target>`). When set, PR detection is skipped. Eco is npm, go, crates, gha.
     required: false
     default: ""
   depsound-version:
     description: The depsound release tag to download and pin.
     required: false
-    default: v0.23.3
+    default: v0.24.0
   cooldown:
     description: Days, forwarded to depsound --cooldown to match an install cooldown.
     required: false
     default: ""
   github-token:
-    description: Token used to read PR metadata and download the pinned depsound release.
+    description: Token used to download the pinned depsound release (and checkout the PR to diff its manifests).
     required: false
     default: ${{ github.token }}
 
@@ -40,47 +56,12 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Dependabot metadata
-      id: meta
-      if: ${{ inputs.deps == '' && github.actor == 'dependabot[bot]' }}
-      uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
-
-    - name: Resolve dependency list
-      id: deps
-      shell: bash
-      env:
-        DEPS_IN: ${{ inputs.deps }}
-        UPDATED: ${{ steps.meta.outputs.updated-dependencies-json }}
-      run: |
-        set -euo pipefail
-        # explicit deps input wins; otherwise map Dependabot's metadata to
-        # depsound's `<eco>:<name> <from> <to>`, dropping ecosystems depsound
-        # does not cover (pip, bundler, ...)
-        if [ -n "${DEPS_IN//[[:space:]]/}" ]; then
-          list="$DEPS_IN"
-        else
-          list=$(printf '%s' "${UPDATED:-[]}" | jq -r '
-            def eco: {
-              "npm":"npm","npm_and_yarn":"npm",
-              "gomod":"go","go_modules":"go",
-              "cargo":"crates",
-              "github-actions":"gha","github_actions":"gha"
-            }[.];
-            # gha tags are v-prefixed but Dependabot reports bare versions
-            def vfix($e): if $e == "gha" and (startswith("v")|not) then "v"+. else . end;
-            .[]
-            | ((.packageEcosystem // "") | eco) as $e
-            | select($e != null
-                and .prevVersion and .newVersion
-                and .prevVersion != "" and .newVersion != "")
-            | "\($e):\(.dependencyName) \(.prevVersion|vfix($e)) \(.newVersion|vfix($e))"
-          ')
-        fi
-        {
-          echo "list<<__DEPS__"
-          echo "$list"
-          echo "__DEPS__"
-        } >> "$GITHUB_OUTPUT"
+    - name: Checkout
+      if: ${{ inputs.deps == '' }} # detection needs the tree; an override does not
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      with:
+        fetch-depth: 0 # need base..head history for the merge-base manifest diff
+        persist-credentials: false
 
     - name: Download and verify depsound
       shell: bash
@@ -110,25 +91,62 @@ runs:
         ( cd "$dir" && case "$asset" in *.zip) unzip -oq "$asset" ;; *) tar xzf "$asset" ;; esac )
         echo "$dir" >> "$GITHUB_PATH"
 
+    - name: Detect dependency changes
+      id: detect
+      shell: bash
+      env:
+        DEPS_IN: ${{ inputs.deps }}
+        MANIFESTS: ${{ inputs.manifests }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      run: |
+        set -euo pipefail
+        list="$RUNNER_TEMP/depsound-deps.txt"
+        : > "$list"
+        if [ -n "${DEPS_IN//[[:space:]]/}" ]; then
+          printf '%s\n' "$DEPS_IN" > "$list" # explicit override wins
+        elif [ -n "$BASE_SHA" ] && [ -n "$HEAD_SHA" ]; then
+          # the diff only says WHICH manifests changed; the change set comes
+          # from parsing both full versions (detect), never from diff text
+          mb=$(git merge-base "$BASE_SHA" "$HEAD_SHA")
+          declare -A want
+          while IFS= read -r m; do m="${m//[[:space:]]/}"; [ -n "$m" ] && want["$m"]=1; done <<< "$MANIFESTS"
+          pairs="$RUNNER_TEMP/depsound-pairs.tsv"
+          : > "$pairs"
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            [ -n "${want[${f##*/}]:-}" ] || continue # match by base name
+            oldf=$(mktemp); git show "$mb:$f"       > "$oldf" 2>/dev/null || oldf="-"
+            newf=$(mktemp); git show "$HEAD_SHA:$f"  > "$newf" 2>/dev/null || newf="-"
+            printf '%s\t%s\t%s\n' "$f" "$oldf" "$newf" >> "$pairs"
+          done < <(git diff --name-only "$mb" "$HEAD_SHA")
+          [ -s "$pairs" ] && depsound detect --file="$pairs" > "$list"
+        else
+          echo "no pull_request base/head available; nothing to detect"
+        fi
+        if [ -s "$list" ]; then echo "changed=true" >> "$GITHUB_OUTPUT"; else echo "changed=false" >> "$GITHUB_OUTPUT"; fi
+        echo "list-file=$list" >> "$GITHUB_OUTPUT"
+
     - name: Run depsound
       id: run
       shell: bash
       env:
-        DEPS: ${{ steps.deps.outputs.list }}
+        LIST: ${{ steps.detect.outputs.list-file }}
+        CHANGED: ${{ steps.detect.outputs.changed }}
         COOLDOWN: ${{ inputs.cooldown }}
       run: |
         set -euo pipefail
-        if [ -z "${DEPS//[[:space:]]/}" ]; then
+        if [ "$CHANGED" != "true" ] || [ ! -s "$LIST" ]; then
           echo "no dependency changes to review"
           echo "tripped=false" >> "$GITHUB_OUTPUT"
           exit 0
         fi
         out="$RUNNER_TEMP/depsound-report"
         mkdir -p "$out"
-        common=(bulk)
+        common=(bulk --file="$LIST")
         [ -n "$COOLDOWN" ] && common+=("--cooldown=$COOLDOWN")
-        printf '%s\n' "$DEPS" | depsound "${common[@]}" --format=markdown > "$out/comment.md"
-        printf '%s\n' "$DEPS" | depsound "${common[@]}" --format=json > "$out/report.json"
+        depsound "${common[@]}" --format=markdown > "$out/comment.md"
+        depsound "${common[@]}" --format=json    > "$out/report.json"
         title=$(sed -n 's/^<!-- depsound-title: \(.*\) -->$/\1/p' "$out/comment.md" | head -1)
         if grep -q 'no signals tripped' "$out/comment.md"; then tripped=false; else tripped=true; fi
         pr=$(jq -r '.pull_request.number // empty' "$GITHUB_EVENT_PATH")
