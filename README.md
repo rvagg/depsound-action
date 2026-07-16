@@ -38,8 +38,8 @@ Review is two workflows, and this action is two matching pieces, so each
 workflow is a single `uses:`. Copy both from [`examples/`](examples/) into your
 `.github/workflows/`:
 
-- [`examples/depsound.yml`](examples/depsound.yml) — `uses: rvagg/depsound-action`
-- [`examples/depsound-post.yml`](examples/depsound-post.yml) — `uses: rvagg/depsound-action/post`
+- [`examples/depsound.yml`](examples/depsound.yml): `uses: rvagg/depsound-action`
+- [`examples/depsound-post.yml`](examples/depsound-post.yml): `uses: rvagg/depsound-action/post`
 
 The compute action diffs the PR's dependency manifests itself, so a change to a
 watched manifest is reviewed no matter who opened the PR (not just Dependabot),
