@@ -134,6 +134,7 @@ runs:
         LIST: ${{ steps.detect.outputs.list-file }}
         CHANGED: ${{ steps.detect.outputs.changed }}
         COOLDOWN: ${{ inputs.cooldown }}
+        VERSION: ${{ inputs.depsound-version }}
       run: |
         set -euo pipefail
         if [ "$CHANGED" != "true" ] || [ ! -s "$LIST" ]; then
@@ -150,8 +151,9 @@ runs:
         title=$(sed -n 's/^<!-- depsound-title: \(.*\) -->$/\1/p' "$out/comment.md" | head -1)
         if grep -q 'no signals tripped' "$out/comment.md"; then tripped=false; else tripped=true; fi
         pr=$(jq -r '.pull_request.number // empty' "$GITHUB_EVENT_PATH")
-        jq -n --arg pr "$pr" --arg title "$title" --argjson tripped "$tripped" \
-          '{pr: $pr, title: $title, tripped: $tripped}' > "$out/meta.json"
+        # version pins the reproduce command to the exact analyzer run
+        jq -n --arg pr "$pr" --arg title "$title" --arg ver "$VERSION" --argjson tripped "$tripped" \
+          '{pr: $pr, title: $title, version: $ver, tripped: $tripped}' > "$out/meta.json"
         {
           echo "title=$title"
           echo "tripped=$tripped"
@@ -161,10 +163,26 @@ runs:
           echo "__DEPSOUND_MD__"
         } >> "$GITHUB_OUTPUT"
 
+    - name: Failure report
+      id: fail
+      if: ${{ failure() }} # any earlier step died: leave a report so the poster still speaks
+      shell: bash
+      run: |
+        out="$RUNNER_TEMP/depsound-report"
+        mkdir -p "$out"
+        # only synthesize a failure marker if a real report was not produced
+        if [ ! -f "$out/meta.json" ]; then
+          pr=$(jq -r '.pull_request.number // empty' "$GITHUB_EVENT_PATH")
+          jq -n --arg pr "$pr" '{pr: $pr, failed: true, title: "depsound: analysis incomplete"}' > "$out/meta.json"
+        fi
+        echo "report=true" >> "$GITHUB_OUTPUT"
+
     - name: Upload report
-      if: ${{ steps.run.outputs.report-dir != '' }}
+      # upload on success (a produced report) OR failure (the synthesized marker),
+      # so a compute failure is not silent; a no-change run uploads nothing
+      if: ${{ always() && (steps.run.outputs.report-dir != '' || steps.fail.outputs.report == 'true') }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: depsound-report
-        path: ${{ steps.run.outputs.report-dir }}
+        path: ${{ runner.temp }}/depsound-report
         if-no-files-found: ignore

@@ -19,8 +19,14 @@ newcomer's) it:
   rebases) with a plain-language headline and the signals worth weighing;
 - uploads the full depsound report as a workflow **artifact** for anyone, or any
   agent, who wants the detail;
-- sets a **neutral check** (never success/failure). The check is the gate, the
-  comment is the voice.
+- sets a **neutral check** (never success/failure) that branch protection can
+  require. The check and the comment are written independently (one failing
+  never suppresses the other), and both upsert on the PR head so reruns do not
+  pile up.
+
+If the analysis itself fails, the action still posts an **"analysis incomplete"**
+comment rather than going silent, since silence on a broken run would read as a
+clean approval.
 
 Because depsound fetches the *published* artifact and its output is reproducible
 from public registry data, there is nothing to host: the report lives in the PR
@@ -115,7 +121,9 @@ controlled data, parsed for names and versions); it never runs the PR's code,
 and depsound analyzes the *published* artifacts those manifests name, not the
 branch. It runs with a read-only token and never posts. The post half holds the
 write token but only downloads the report artifact (data) and posts it, never
-touching PR code, which is what keeps that token safe.
+touching PR code, which is what keeps that token safe. It only edits a sticky
+comment authored by its own bot identity, so a PR author cannot plant the
+comment marker and have the trusted workflow overwrite their comment.
 
 ## License
 
