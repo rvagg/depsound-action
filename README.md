@@ -77,7 +77,7 @@ The compute action ([`rvagg/depsound-action`](action.yml)):
 |---|---|
 | `manifests` | newline list of manifest/lockfile **base names** to watch on a PR, matched at any path (default: `go.mod`, `package-lock.json`, `pnpm-lock.yaml`, `Cargo.lock`). A committed lockfile is watched in preference to its declaration file (`package.json`, `Cargo.toml`) because it pins exact + transitive versions. See [Current limitations](#current-limitations) for repos with no lockfile |
 | `deps` | override: a newline depsound list (`<eco>:<name> <from> <to>` bump, `<eco>:<name> <version>` new dep, or `redirect <eco>:<name> <target>`); when set, PR detection is skipped |
-| `depsound-version` | the depsound release to download and checksum-verify (default `v0.24.0`) |
+| `depsound-version` | the depsound release to download and checksum-verify (default `v0.25.0`) |
 | `cooldown` | days, forwarded to depsound `--cooldown` to match an install cooldown |
 | `github-token` | token to checkout the PR and download the release (defaults to the job token) |
 
@@ -92,6 +92,29 @@ Pin every action to a full commit SHA, not a moving tag. A tag is a mutable
 pointer an attacker can re-point (the tj-actions vector); a SHA is immutable.
 This is depsound's own advice, so this repo and its examples follow it, and
 Dependabot keeps the SHAs (and their `# vX.Y.Z` comments) current.
+
+## Staying current
+
+The two files you copy are deliberately thin: a single `uses:` each, plus the
+triggers and the minimal permissions. All the review logic lives in this action,
+so new functionality reaches you by bumping the pinned ref, not by editing your
+workflows. Enable Dependabot's `github-actions` updater and it bumps both `uses:`
+SHAs (and their `# vX.Y.Z` comments) as releases land:
+
+```yaml
+# .github/dependabot.yml
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+```
+
+The one thing that can force a workflow edit is a new permission scope or
+trigger, since those live in your copy, not the action. Changes of that kind are
+gated behind a major version bump, a deliberate opt-in, so ordinary updates stay
+a version bump with nothing to touch.
 
 ## Current limitations
 
