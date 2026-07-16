@@ -49,7 +49,7 @@ runs:
           if (failed) {
             body = `**depsound** · analysis incomplete\n\n`
               + `depsound could not complete its review of this PR's dependency `
-              + `changes (see the run logs). This is NOT a clean result: the `
+              + `changes (see the run logs). This is not a clean result: the `
               + `changes were not assessed.\n`;
           } else {
             body = fs.readFileSync('report/comment.md', 'utf8');
