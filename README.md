@@ -14,7 +14,9 @@ newcomer's) it:
 
 - diffs the changed manifests to work out what actually moved, a version bump, a
   newly-added dependency, or a `replace`/redirect off the registry, and runs
-  depsound over them;
+  depsound over them. **github-actions** `uses:` bumps in workflow files count
+  too, read straight from the pinned refs in the diff (any PR author, not just
+  Dependabot);
 - upserts a single **sticky comment** (one per PR, edited in place across
   rebases) with a plain-language headline and the signals worth weighing;
 - uploads the full depsound report as a workflow **artifact** for anyone, or any
@@ -77,7 +79,7 @@ The compute action ([`rvagg/depsound-action`](action.yml)):
 |---|---|
 | `manifests` | newline list of manifest/lockfile **base names** to watch on a PR, matched at any path (default: `go.mod`, `package-lock.json`, `pnpm-lock.yaml`, `Cargo.lock`). A committed lockfile is watched in preference to its declaration file (`package.json`, `Cargo.toml`) because it pins exact + transitive versions. See [Current limitations](#current-limitations) for repos with no lockfile |
 | `deps` | override: a newline depsound list (`<eco>:<name> <from> <to>` bump, `<eco>:<name> <version>` new dep, or `redirect <eco>:<name> <target>`); when set, PR detection is skipped |
-| `depsound-version` | the depsound release to download and checksum-verify (default `v0.26.0`) |
+| `depsound-version` | the depsound release to download and checksum-verify (default `v0.27.0`) |
 | `cooldown` | days, forwarded to depsound `--cooldown` to match an install cooldown |
 | `github-token` | token to checkout the PR and download the release (defaults to the job token) |
 
@@ -130,6 +132,10 @@ boundaries:
 - **Redirects.** A `replace`/`patch`/override pointing a dependency off the
   registry is flagged for **Go** today; npm/pnpm/crates redirect detection is a
   follow-on.
+- **github-actions.** Standard action `uses:` bumps in `.github/workflows/*.yml`
+  and composite `action.yml`/`action.yaml` are detected from their pinned refs.
+  Reusable-workflow calls (`owner/repo/.github/workflows/x.yml`), `docker://` and
+  local (`./`) uses are skipped for now (a follow-on).
 
 What depsound itself does not assess (reachability, runtime behaviour, your
 tests, transitive depth, publish provenance) is stated on every report.

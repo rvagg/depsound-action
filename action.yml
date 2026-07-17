@@ -16,6 +16,9 @@ inputs:
       (common for npm and crates LIBRARIES) is not detected yet, its changes
       live only in the declaration file, which detection does not read. go.mod
       is always both declaration and resolution, so Go is unaffected.
+      github-actions manifests (.github/workflows/*.yml and composite
+      action.yml/action.yaml) are ALWAYS detected regardless of this list, from
+      their pinned `uses:` refs.
     required: false
     default: |
       go.mod
@@ -32,7 +35,7 @@ inputs:
   depsound-version:
     description: The depsound release tag to download and pin.
     required: false
-    default: v0.26.0
+    default: v0.27.0
   cooldown:
     description: Days, forwarded to depsound --cooldown to match an install cooldown.
     required: false
@@ -115,7 +118,18 @@ runs:
           : > "$pairs"
           while IFS= read -r f; do
             [ -n "$f" ] || continue
-            [ -n "${want[${f##*/}]:-}" ] || continue # match by base name
+            base="${f##*/}"; dir="${f%/*}"
+            # keep a changed file for detection if it is a configured
+            # lockfile/manifest (by base name), OR a github-actions manifest by
+            # LOCATION: a workflow under .github/workflows/, or a composite
+            # action.yml/action.yaml. depsound's detect parses their `uses:` pins.
+            keep=
+            if [ -n "${want[$base]:-}" ]; then keep=1; fi
+            case "$dir" in
+              */.github/workflows|.github/workflows) case "$base" in *.yml|*.yaml) keep=1 ;; esac ;;
+            esac
+            case "$base" in action.yml|action.yaml) keep=1 ;; esac
+            [ -n "$keep" ] || continue
             oldf=$(mktemp); git show "$mb:$f"       > "$oldf" 2>/dev/null || oldf="-"
             newf=$(mktemp); git show "$HEAD_SHA:$f"  > "$newf" 2>/dev/null || newf="-"
             printf '%s\t%s\t%s\n' "$f" "$oldf" "$newf" >> "$pairs"
