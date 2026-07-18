@@ -163,7 +163,14 @@ runs:
         depsound "${common[@]}" --format=markdown > "$out/comment.md"
         depsound "${common[@]}" --format=json    > "$out/report.json"
         title=$(sed -n 's/^<!-- depsound-title: \(.*\) -->$/\1/p' "$out/comment.md" | head -1)
-        if grep -q 'no signals tripped' "$out/comment.md"; then tripped=false; else tripped=true; fi
+        # derive tripped from depsound's authoritative title, never a body grep: a
+        # mixed PR foots "N others: no signals tripped", which a body grep misreads
+        # as clean. Unknown title errs toward flagging (silence is not safety).
+        case "$title" in
+          *"flagged for review"*) tripped=true ;;
+          *"no signals tripped"*) tripped=false ;;
+          *) tripped=true ;;
+        esac
         pr=$(jq -r '.pull_request.number // empty' "$GITHUB_EVENT_PATH")
         # version pins the reproduce command to the exact analyzer run
         jq -n --arg pr "$pr" --arg title "$title" --arg ver "$VERSION" --argjson tripped "$tripped" \

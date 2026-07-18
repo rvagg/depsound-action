@@ -1,7 +1,7 @@
 # Copy into .github/workflows/ of the repo you want reviewed, alongside
 # depsound-post.yml. Review needs two workflows; the README explains why.
 #
-# This one COMPUTES: on every PR (read-only) it diffs the changed dependency
+# This one computes: on every PR (read-only) it diffs the changed dependency
 # manifests, runs depsound, and uploads the report as an artifact.
 name: depsound
 on:

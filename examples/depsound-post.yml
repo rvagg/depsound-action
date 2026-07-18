@@ -1,8 +1,8 @@
 # Copy into .github/workflows/ of the repo you want reviewed, alongside
 # depsound.yml. Review needs two workflows; the README explains why.
 #
-# This one POSTS: it runs after depsound.yml completes, downloads the report
-# ARTIFACT, and upserts the sticky comment + neutral check. It runs in a
+# This one posts: it runs after depsound.yml completes, downloads the report
+# artifact, and upserts the sticky comment + neutral check. It runs in a
 # workflow_run context that carries the repo's write token (so it works even
 # for Dependabot and fork PRs, whose own token is read-only), and it never
 # checks out or runs any PR code, which is what keeps that token safe.
