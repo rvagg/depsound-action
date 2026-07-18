@@ -66,9 +66,20 @@ runs:
           const reproduce = refs.length === 1
             ? `<code>${runCmd} ${esc(refs[0].replace(' -> ', ' '))}</code>`
             : `<code>${runCmd} &lt;eco&gt;:&lt;name&gt; &lt;from&gt; &lt;to&gt;</code>`;
+          // the local run does far more than the summary above: the full
+          // per-file analysis plus a persisted, grep-able workspace an agent
+          // can read. Lead varies by state so a clean result still invites a
+          // look ("no flags" is a start, not a pass), a flagged one says dig in.
+          const reproLead = failed
+            ? `Run depsound locally to reproduce and inspect:`
+            : meta.tripped === false
+              ? `'No flags' is a starting point, not a pass. Run locally for the full analysis and a grep-able workspace (trees + stats.json) an agent can dig through:`
+              : `Dig in locally: the full per-file analysis and a grep-able workspace (trees + stats.json) an agent can dig through:`;
+          const skillUrl = 'https://github.com/rvagg/depsound/blob/master/skills/review-dependency-change/SKILL.md';
           const footer =
-            `<sub>Reproduce locally with agent-friendly output:</sub>\n`
+            `<sub>${reproLead}</sub>\n`
             + `<blockquote><sub>${reproduce}</sub></blockquote>\n`
+            + `<sub>Or hand this PR to an agent: point it at the PR and the <a href="${skillUrl}">review skill</a> for a proceed/hold call.</sub>\n`
             + `<sub><a href="https://github.com/rvagg/depsound">depsound</a>`
             + ` · <a href="${run.html_url}">full report + logs</a></sub>`;
           const withExtras = body.includes(marker)
