@@ -12,4 +12,4 @@ jobs:
   review:
     runs-on: ubuntu-latest
     steps:
-      - uses: rvagg/depsound-action@master
+      - uses: rvagg/depsound-action@c0b1be903d95cc59d00bb660310629cfaed253c9 # v0.2.0
