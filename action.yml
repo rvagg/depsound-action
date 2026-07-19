@@ -35,7 +35,7 @@ inputs:
   depsound-version:
     description: The depsound release tag to download and pin.
     required: false
-    default: v0.28.1
+    default: v0.28.2
   cooldown:
     description: Days, forwarded to depsound --cooldown to match an install cooldown.
     required: false
