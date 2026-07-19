@@ -29,7 +29,6 @@ runs:
         github-token: ${{ inputs.github-token }}
         script: |
           const fs = require('fs');
-          const core = require('@actions/core');
 
           let meta;
           try {
