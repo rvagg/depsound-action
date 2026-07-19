@@ -29,14 +29,17 @@ runs:
         github-token: ${{ inputs.github-token }}
         script: |
           const fs = require('fs');
-          // no artifact = no dependency changes = nothing to review, stay silent
+          const core = require('@actions/core');
+
           let meta;
           try {
             meta = JSON.parse(fs.readFileSync('report/meta.json', 'utf8'));
           } catch (e) {
+            // no artifact = no dependency changes = nothing to review, stay silent
             core.info('no depsound report to post (no dependency changes)');
             return;
           }
+
           const { owner, repo } = context.repo;
           const run = context.payload.workflow_run;
           const marker = '<!-- depsound -->';
@@ -55,17 +58,18 @@ runs:
             body = fs.readFileSync('report/comment.md', 'utf8');
           }
 
-          // consumption chrome: reproduce pinned to the EXACT analyzer version
-          // (never @latest, which cannot promise identical output), plus links
+          // reproduce pinned to the exact depsound version plus links
           const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
           let refs = [];
           try {
             refs = JSON.parse(fs.readFileSync('report/report.json', 'utf8')).map(r => r.ref).filter(Boolean);
           } catch (e) { /* no report.json (failure or grouped): generic placeholder */ }
+
           const runCmd = `go run github.com/rvagg/depsound/cmd/depsound@${meta.version || 'latest'}`;
           const reproduce = refs.length === 1
             ? `<code>${runCmd} ${esc(refs[0].replace(' -> ', ' '))}</code>`
             : `<code>${runCmd} &lt;eco&gt;:&lt;name&gt; &lt;from&gt; &lt;to&gt;</code>`;
+
           // the local run does far more than the summary above: the full
           // per-file analysis plus a persisted, grep-able workspace an agent
           // can read. Lead varies by state so a clean result still invites a
@@ -73,20 +77,19 @@ runs:
           const reproLead = failed
             ? `Run depsound locally to reproduce and inspect:`
             : meta.tripped === false
-              ? `'No flags' is a starting point, not a pass. Run locally for the full analysis and a grep-able workspace (trees + stats.json) an agent can dig through:`
-              : `Dig in locally: the full per-file analysis and a grep-able workspace (trees + stats.json) an agent can dig through:`;
+              ? `This is a starting point, not a pass. Run locally for full analysis and grep-able workspace (trees + stats.json) for agent investigation:`
+              : `Continue locally, the full per-file analysis and a grep-able workspace (trees + stats.json) are available for agent investigation:`;
           const skillUrl = 'https://github.com/rvagg/depsound/blob/master/skills/review-dependency-change/SKILL.md';
           const footer =
-            `<sub>${reproLead}</sub>\n`
-            + `<blockquote><sub>${reproduce}</sub></blockquote>\n`
-            + `<sub>Or hand this PR to an agent: point it at the PR and the <a href="${skillUrl}">review skill</a> for a proceed/hold call.</sub>\n`
-            + `<sub><a href="https://github.com/rvagg/depsound">depsound</a>`
-            + ` · <a href="${run.html_url}">full report + logs</a></sub>`;
+            `${reproLead}\n`
+            + `<blockquote>${reproduce}</blockquote>\n`
+            + `Or hand this PR to an agent: point it at the PR and the <a href="${skillUrl}">review skill</a> for a proceed/hold call.\n\n`
+            + `<sub><a href="https://github.com/rvagg/depsound">depsound</a> · <a href="${run.html_url}">full report + logs</a></sub>`;
           const withExtras = body.includes(marker)
-            ? body.replace(marker, `${footer}\n${marker}`)
-            : `${body}\n${footer}\n${marker}`;
+            ? body.replace(marker, `\n\n${footer}\n${marker}`)
+            : `${body}\n\n${footer}\n${marker}`;
 
-          // the check and the comment are INDEPENDENT writes: one failing must
+          // the check and the comment are independent writes: one failing must
           // not suppress the other. The check upserts on the SHA so reruns do
           // not pile up.
           try {
@@ -112,7 +115,7 @@ runs:
             return;
           }
           try {
-            // sticky upsert: adopt only a BOT-authored marked comment (ours),
+            // sticky upsert: adopt only a bot-authored marked comment (ours),
             // never one a PR author planted with the marker (they are a User)
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner, repo, issue_number: pr, per_page: 100,
