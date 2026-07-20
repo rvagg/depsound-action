@@ -27,6 +27,7 @@ runs:
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       with:
         github-token: ${{ inputs.github-token }}
+        retries: 3 # absorb transient 5xx/network on the check + comment writes
         script: |
           const fs = require('fs');
 
@@ -89,8 +90,11 @@ runs:
             : `${body}\n\n${footer}\n${marker}`;
 
           // the check and the comment are independent writes: one failing must
-          // not suppress the other. The check upserts on the SHA so reruns do
-          // not pile up.
+          // not suppress the other's attempt. retries (set on the step) absorb
+          // transient 5xx; a write that still fails is recorded so the job goes
+          // red (and re-runnable) instead of silently dropping the post. The
+          // check upserts on the SHA so reruns do not pile up.
+          const failures = [];
           try {
             const { data } = await github.rest.checks.listForRef({ owner, repo, ref: run.head_sha, check_name: 'depsound' });
             const params = {
@@ -105,27 +109,35 @@ runs:
               await github.rest.checks.create(params);
             }
           } catch (e) {
+            failures.push(`check: ${e.message}`);
             core.warning(`depsound check write failed: ${e.message}`);
           }
 
           const pr = Number(meta.pr);
-          if (!pr) {
-            core.info('no PR number in report; posted the check only');
-            return;
-          }
-          try {
-            // sticky upsert: adopt only a bot-authored marked comment (ours),
-            // never one a PR author planted with the marker (they are a User)
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              owner, repo, issue_number: pr, per_page: 100,
-            });
-            const existing = comments.find(c =>
-              c.body && c.body.includes(marker) && c.user && c.user.type === 'Bot');
-            if (existing) {
-              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body: withExtras });
-            } else {
-              await github.rest.issues.createComment({ owner, repo, issue_number: pr, body: withExtras });
+          if (pr) {
+            try {
+              // sticky upsert: adopt only a bot-authored marked comment (ours),
+              // never one a PR author planted with the marker (they are a User)
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner, repo, issue_number: pr, per_page: 100,
+              });
+              const existing = comments.find(c =>
+                c.body && c.body.includes(marker) && c.user && c.user.type === 'Bot');
+              if (existing) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body: withExtras });
+              } else {
+                await github.rest.issues.createComment({ owner, repo, issue_number: pr, body: withExtras });
+              }
+            } catch (e) {
+              failures.push(`comment: ${e.message}`);
+              core.warning(`depsound comment write failed: ${e.message}`);
             }
-          } catch (e) {
-            core.warning(`depsound comment write failed: ${e.message}`);
+          } else {
+            core.info('no PR number in report; posted the check only');
+          }
+
+          // a write that survived every retry is a real failure: surface it so
+          // the run is red and offers a re-run, never a swallowed silent drop.
+          if (failures.length) {
+            core.setFailed(`depsound post incomplete after retries (${failures.join('; ')}); re-run this job to retry.`);
           }
