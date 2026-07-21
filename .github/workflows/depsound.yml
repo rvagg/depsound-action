@@ -1,15 +1,26 @@
-# depsound dogfooding, the COMPUTE half: reviews this repo's own
-# dependency-update PRs. The copyable template for other repos is in
-# examples/depsound.yml.
+# depsound dogfooding: reviews this repo's own dependency-update PRs. One
+# workflow, two jobs; the copyable template (with the security-model notes)
+# is examples/depsound.yml.
 name: depsound
 on:
-  pull_request:
+  pull_request_target:
 
-permissions:
-  contents: read # checkout + diff the PR's manifests; no write, never posts
+permissions: {} # scopes are granted per job below
 
 jobs:
   review:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # diff the PR's manifests; this job never sees a write token
     steps:
       - uses: rvagg/depsound-action@e1e774682c78f837dce621d0d67f028e65f2afe8 # v0.2.7
+  post:
+    needs: review
+    if: ${{ always() && needs.review.result != 'cancelled' }} # a failed review still posts its failure marker
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write # upsert the sticky comment
+      checks: write        # set the neutral check
+      actions: read        # download the report artifact
+    steps:
+      - uses: rvagg/depsound-action/post@e1e774682c78f837dce621d0d67f028e65f2afe8 # v0.2.7

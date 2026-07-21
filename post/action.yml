@@ -20,7 +20,9 @@ runs:
       with:
         name: depsound-report
         path: report
-        run-id: ${{ github.event.workflow_run.id }}
+        # same-run (pull_request_target, the recommended layout) downloads from
+        # this run; the legacy workflow_run split names the compute run
+        run-id: ${{ github.event.workflow_run.id || github.run_id }}
         github-token: ${{ inputs.github-token }}
 
     - name: Upsert comment and set check
@@ -41,12 +43,18 @@ runs:
           }
 
           const { owner, repo } = context.repo;
-          const run = context.payload.workflow_run;
+          // same-run mode (pull_request_target): the PR event is the trusted
+          // identity source; legacy workflow_run mode reads its compute run
+          const pull = context.payload.pull_request;
+          const run = context.payload.workflow_run || {
+            head_sha: pull && pull.head.sha,
+            html_url: `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`,
+          };
           const marker = '<!-- depsound -->';
           const title = meta.title || 'depsound';
           const failed = meta.failed === true;
 
-          // depsound owns the wording on success; on FAILURE the poster speaks
+          // depsound owns the wording on success; on failure the poster speaks
           // so a broken analysis never reads as a clean, silent approval
           let body;
           if (failed) {
@@ -113,7 +121,11 @@ runs:
             core.warning(`depsound check write failed: ${e.message}`);
           }
 
-          const pr = Number(meta.pr);
+          // the trusted event names the PR whenever present; only the legacy
+          // workflow_run split falls back to the artifact's meta.pr (which a
+          // PR-controlled compute could have forged; the same-run layout
+          // removes that boundary entirely)
+          const pr = pull ? pull.number : Number(meta.pr);
           if (pr) {
             try {
               // sticky upsert: adopt only a bot-authored marked comment (ours),

@@ -66,6 +66,26 @@ runs:
         fetch-depth: 0 # need base..head history for the merge-base manifest diff
         persist-credentials: false
 
+    - name: Fetch PR head (objects only, never checked out)
+      # under pull_request_target the checkout above is the trusted base; a
+      # fork PR's head commits are absent, so fetch them as git objects. detect
+      # reads manifest blobs out of them with `git show`; nothing from the head
+      # is ever checked out onto disk or executed.
+      if: ${{ inputs.deps == '' && github.event.pull_request != null }}
+      shell: bash
+      env:
+        TOKEN: ${{ inputs.github-token }}
+        PR: ${{ github.event.pull_request.number }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      run: |
+        set -euo pipefail
+        if ! git cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null; then
+          # transient auth for this one fetch (checkout dropped its credentials)
+          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
+          git -c http.extraheader="AUTHORIZATION: basic $auth" \
+            fetch --no-tags origin "refs/pull/$PR/head"
+        fi
+
     - name: Download and verify depsound
       shell: bash
       env:

@@ -36,40 +36,44 @@ and the workspace regenerates on demand.
 
 ## Usage
 
-Review is two workflows, and this action is two matching pieces, so each
-workflow is a single `uses:`. Copy both from [`examples/`](examples/) into your
+Review is one workflow with two jobs, each a single `uses:`. Copy
+[`examples/depsound.yml`](examples/depsound.yml) into your
 `.github/workflows/`:
 
-- [`examples/depsound.yml`](examples/depsound.yml): `uses: rvagg/depsound-action`
-- [`examples/depsound-post.yml`](examples/depsound-post.yml): `uses: rvagg/depsound-action/post`
+- job `review`: `uses: rvagg/depsound-action` (computes, read-only token)
+- job `post`: `uses: rvagg/depsound-action/post` (comments, write scopes)
 
-The compute action diffs the PR's dependency manifests itself, so a change to a
+The review job diffs the PR's dependency manifests itself, so a change to a
 watched manifest is reviewed no matter who opened the PR (not just Dependabot),
 and for the common case there is nothing to configure; pin the two `uses:` to a
 SHA (see Pinning) and you are done. Point it at non-standard manifest locations
 with `manifests`, or bypass detection entirely with an explicit `deps` list (see
 Inputs).
 
-### Why two workflows
+### The security model (why `pull_request_target` is safe here)
 
-Dependabot and fork PRs run with a **read-only** `GITHUB_TOKEN` and no access to
-secrets, so a job on `pull_request` cannot post a comment or set a check on
-those PRs, exactly the PRs that most need reviewing. The fix is to split the
-work by the token each half needs:
+The workflow runs on `pull_request_target`, which means the **base branch's**
+workflow definition and action pins execute, never the PR's copy: a PR cannot
+edit the workflow, swap the action version, or forge the report the poster
+publishes. Its token also carries the repo's write scopes, so the comment
+lands on Dependabot and fork PRs, whose own `pull_request` token is read-only.
 
-- **compute** runs on `pull_request` with read-only permissions. It checks out
-  the PR to diff its manifests, runs depsound, and uploads the report as an
-  artifact. It never posts, so it never needs write access. Checking out
-  untrusted PR code is safe here because it only *reads* the manifest text
-  (never runs the code), and depsound then fetches and analyzes the *published*
-  artifacts those manifests name, not the branch's contents.
-- **post** runs on `workflow_run`, which fires after compute finishes and runs
-  in the base repo's context with the **write** token. It only downloads the
-  report artifact (data) and posts it; it never checks out or runs any PR code.
+`pull_request_target` is dangerous when a workflow checks out and executes PR
+code (install scripts, builds, tests) next to that token. This workflow never
+does either:
 
-That separation is what keeps a write token away from untrusted code while still
-letting the comment land on Dependabot and fork PRs. It is the standard, safe
-`workflow_run` pattern, not a workaround.
+- The **review** job checks out the trusted base, fetches the PR head only as
+  git *objects*, and reads manifest bytes out of them with `git show`; nothing
+  from the PR is checked out onto disk or executed. depsound then fetches and
+  analyzes the *published* artifacts those manifests name, treating all of it
+  as hostile data. The job's `permissions: contents: read` means even the
+  token it holds is read-only.
+- The **post** job holds the write scopes (`pull-requests`, `checks`) and only
+  downloads the report artifact, produced by the trusted review job in the
+  same run, and posts it.
+
+The job split is the token discipline: the code that touches attacker-supplied
+bytes never holds a write token.
 
 ## Inputs
 
@@ -144,15 +148,15 @@ tests, transitive depth, publish provenance) is stated on every report.
 
 The action downloads a pinned depsound release and verifies it against the
 release's own checksums, which catches a corrupted download though it is not an
-independent anchor against a compromised release. The compute half checks out
-the PR to diff its manifests, but only *reads* the manifest text (attacker-
-controlled data, parsed for names and versions); it never runs the PR's code,
-and depsound analyzes the *published* artifacts those manifests name, not the
-branch. It runs with a read-only token and never posts. The post half holds the
-write token but only downloads the report artifact (data) and posts it, never
-touching PR code, which is what keeps that token safe. It only edits a sticky
-comment authored by its own bot identity, so a PR author cannot plant the
-comment marker and have the trusted workflow overwrite their comment.
+independent anchor against a compromised release. The review job reads the
+PR's manifest bytes as git objects (attacker-controlled data, parsed for names
+and versions, never checked out or executed) with a read-only token; depsound
+analyzes the *published* artifacts those manifests name, not the branch. The
+post job holds the write scopes but only downloads the report artifact,
+produced by the trusted review job in the same run, and posts it. It only
+edits a sticky comment authored by its own bot identity, so a PR author cannot
+plant the comment marker and have the trusted workflow overwrite their
+comment. The full model is under Usage above.
 
 ## License
 
