@@ -138,12 +138,16 @@ boundaries:
   registry is flagged for **Go** today; npm/pnpm/crates redirect detection is a
   follow-on.
 - **github-actions.** Standard action `uses:` bumps in `.github/workflows/*.yml`
-  and composite `action.yml`/`action.yaml` are detected from their pinned refs.
-  Reusable-workflow calls (`owner/repo/.github/workflows/x.yml`), `docker://` and
-  local (`./`) uses are skipped for now (a follow-on).
+  and composite `action.yml`/`action.yaml` are detected from their pinned refs
+  and fully analysed. A changed or added `docker://` image or reusable-workflow
+  call (`owner/repo/.github/workflows/x.yml`) cannot be fetched, so it surfaces
+  as a loud "could not be analysed" coverage gap rather than being analysed (or
+  silently skipped). Local (`./`) uses are the repo's own code, reviewed in the
+  PR diff itself.
 
 What depsound itself does not assess (reachability, runtime behaviour, your
-tests, transitive depth, publish provenance) is stated on every report.
+tests, and publish provenance where a lookup fails or does not apply) is
+stated on every report.
 
 ## Security
 
