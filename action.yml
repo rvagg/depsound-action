@@ -8,23 +8,22 @@ branding:
 inputs:
   manifests:
     description: >
-      Newline-separated manifest/lockfile BASE NAMES to watch on a PR, matched
-      at any path (monorepo nested files included). The defaults are the
-      per-ecosystem resolution files: a committed lockfile pins exact versions
-      and transitive deps, so it is watched in preference to the declaration
-      file (package.json / Cargo.toml). CAVEAT: a repo that commits NO lockfile
-      (common for npm and crates LIBRARIES) is not detected yet, its changes
-      live only in the declaration file, which detection does not read. go.mod
-      is always both declaration and resolution, so Go is unaffected.
-      github-actions manifests (.github/workflows/*.yml and composite
-      action.yml/action.yaml) are ALWAYS detected regardless of this list, from
-      their pinned `uses:` refs.
+      Newline-separated manifest/lockfile base names to watch on a PR, matched
+      at any path (monorepo nested files included). Lockfiles are exact and
+      transitive; the declaration files (package.json / Cargo.toml) are the
+      labelled fallback for repos that commit no lockfile, and a directory
+      whose lockfile also changed defers to it. go.mod is both declaration and
+      resolution. github-actions manifests (.github/workflows/*.yml and
+      composite action.yml/action.yaml) are always detected regardless of this
+      list, from their pinned `uses:` refs.
     required: false
     default: |
       go.mod
       package-lock.json
       pnpm-lock.yaml
       Cargo.lock
+      package.json
+      Cargo.toml
   deps:
     description: >
       Override: a newline-separated depsound list to review (`<eco>:<name> <from>

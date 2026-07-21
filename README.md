@@ -129,14 +129,17 @@ Detection reads a PR's authoritative resolution files, so it inherits their
 boundaries:
 
 - **No committed lockfile.** A repo that does not commit a lockfile (common for
-  npm and crates *libraries*) carries its dependency changes only in the
-  declaration file (`package.json`, `Cargo.toml`), which detection does not yet
-  read, so those changes are currently missed. Go is unaffected (`go.mod` is
-  always both declaration and resolution). A labelled declaration-file fallback
-  is planned.
-- **Redirects.** A `replace`/`patch`/override pointing a dependency off the
-  registry is flagged for **Go** today; npm/pnpm/crates redirect detection is a
-  follow-on.
+  npm and crates *libraries*) is detected from its declaration file
+  (`package.json`, `Cargo.toml`) as a labelled fallback: versions there are
+  ranges, so each endpoint is resolved to one satisfying version at review time
+  (the report says so on the row), and the view is direct-deps-only, with no
+  transitive resolution. A directory whose lockfile also changed uses the
+  lockfile alone (exact + transitive). Go is unaffected (`go.mod` is always
+  both declaration and resolution).
+- **Redirects.** A dependency pointed off the registry is flagged for **Go**
+  (`replace`) and, via the declaration fallback, for npm/crates values with
+  git/url/path/alias forms; lockfile-level npm/pnpm/crates redirect detection
+  is a follow-on.
 - **github-actions.** Standard action `uses:` bumps in `.github/workflows/*.yml`
   and composite `action.yml`/`action.yaml` are detected from their pinned refs
   and fully analysed. A changed or added `docker://` image or reusable-workflow
