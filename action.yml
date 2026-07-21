@@ -35,7 +35,15 @@ inputs:
   depsound-version:
     description: The depsound release tag to download and pin.
     required: false
-    default: v0.29.1
+    default: v0.30.0
+  depsound-sha256:
+    description: >
+      sha256 of the release asset for this runner's platform, an independent
+      anchor supplied by the caller. Required when depsound-version is
+      overridden to a release without build-provenance attestations; ignored
+      otherwise (attestation verification is the default anchor).
+    required: false
+    default: ""
   cooldown:
     description: Days, forwarded to depsound --cooldown to match an install cooldown.
     required: false
@@ -91,6 +99,7 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.github-token }}
         VERSION: ${{ inputs.depsound-version }}
+        EXPECT_SHA256: ${{ inputs.depsound-sha256 }}
       run: |
         set -euo pipefail
         os=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -111,6 +120,18 @@ runs:
         ( cd "$dir"
           if command -v sha256sum >/dev/null; then verify="sha256sum -c -"; else verify="shasum -a 256 -c -"; fi
           grep " ${asset}\$" checksums.txt | $verify )
+        # now the real anchor. A caller-supplied sha256 wins; otherwise verify
+        # the sigstore attestation, which proves the asset came out of
+        # depsound's release workflow and was not swapped afterward. Versions
+        # older than attested releases need the caller's sha256.
+        if [ -n "$EXPECT_SHA256" ]; then
+          if command -v sha256sum >/dev/null; then verify="sha256sum -c -"; else verify="shasum -a 256 -c -"; fi
+          echo "$EXPECT_SHA256  $dir/$asset" | $verify
+        elif ! gh attestation verify "$dir/$asset" --repo rvagg/depsound; then
+          echo "::error::build-provenance attestation verification failed for $asset ($VERSION)." \
+            "If this version predates attested releases, supply depsound-sha256; otherwise treat the asset as suspect."
+          exit 1
+        fi
         ( cd "$dir" && case "$asset" in *.zip) unzip -oq "$asset" ;; *) tar xzf "$asset" ;; esac )
         echo "$dir" >> "$GITHUB_PATH"
 

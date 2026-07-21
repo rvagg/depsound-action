@@ -83,7 +83,8 @@ The compute action ([`rvagg/depsound-action`](action.yml)):
 |---|---|
 | `manifests` | newline list of manifest/lockfile **base names** to watch on a PR, matched at any path (default: `go.mod`, `package-lock.json`, `pnpm-lock.yaml`, `Cargo.lock`). A committed lockfile is watched in preference to its declaration file (`package.json`, `Cargo.toml`) because it pins exact + transitive versions. See [Current limitations](#current-limitations) for repos with no lockfile |
 | `deps` | override: a newline depsound list (`<eco>:<name> <from> <to>` bump, `<eco>:<name> <version>` new dep, or `redirect <eco>:<name> <target>`); when set, PR detection is skipped |
-| `depsound-version` | the depsound release to download and checksum-verify (default `v0.29.1`) |
+| `depsound-version` | the depsound release to download and verify (default `v0.30.0`) |
+| `depsound-sha256` | caller-supplied sha256 for the platform asset; required only when `depsound-version` is overridden to a release without build-provenance attestations |
 | `cooldown` | days, forwarded to depsound `--cooldown` to match an install cooldown |
 | `github-token` | token to checkout the PR and download the release (defaults to the job token) |
 
@@ -146,9 +147,13 @@ tests, transitive depth, publish provenance) is stated on every report.
 
 ## Security
 
-The action downloads a pinned depsound release and verifies it against the
-release's own checksums, which catches a corrupted download though it is not an
-independent anchor against a compromised release. The review job reads the
+The action downloads a pinned depsound release, checks it against the
+release's checksums (a corrupt-download check), then verifies its sigstore
+build-provenance attestation with `gh attestation verify`, an anchor
+independent of the release assets that proves the binary was built by
+depsound's own release workflow, not swapped afterward. Overriding
+`depsound-version` to a release that predates attestations requires supplying
+`depsound-sha256` as the caller's own anchor. The review job reads the
 PR's manifest bytes as git objects (attacker-controlled data, parsed for names
 and versions, never checked out or executed) with a read-only token; depsound
 analyzes the *published* artifacts those manifests name, not the branch. The
