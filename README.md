@@ -81,7 +81,7 @@ The compute action ([`rvagg/depsound-action`](action.yml)):
 
 | Input | Purpose |
 |---|---|
-| `manifests` | newline list of manifest/lockfile **base names** to watch on a PR, matched at any path (default: `go.mod`, `package-lock.json`, `pnpm-lock.yaml`, `Cargo.lock`). A committed lockfile is watched in preference to its declaration file (`package.json`, `Cargo.toml`) because it pins exact + transitive versions. See [Current limitations](#current-limitations) for repos with no lockfile |
+| `manifests` | newline list of manifest/lockfile **base names** to watch on a PR, matched at any path (default: `go.mod`, the three lockfiles, and the declaration fallbacks `package.json`, `Cargo.toml`, `pnpm-workspace.yaml`). A changed lockfile is preferred over the declaration file beside it (exact + transitive). See [Current limitations](#current-limitations) |
 | `deps` | override: a newline depsound list (`<eco>:<name> <from> <to>` bump, `<eco>:<name> <version>` new dep, or `redirect <eco>:<name> <target>`); when set, PR detection is skipped |
 | `depsound-version` | the depsound release to download and verify (default `v0.30.0`) |
 | `depsound-sha256` | caller-supplied sha256 for the platform asset; required only when `depsound-version` is overridden to a release without build-provenance attestations |
@@ -135,7 +135,8 @@ boundaries:
   (the report says so on the row), and the view is direct-deps-only, with no
   transitive resolution. A directory whose lockfile also changed uses the
   lockfile alone (exact + transitive). Go is unaffected (`go.mod` is always
-  both declaration and resolution).
+  both declaration and resolution). pnpm **catalog** bumps (ranges centralized
+  in `pnpm-workspace.yaml`) are detected the same way.
 - **Redirects.** A dependency pointed off the registry is flagged for **Go**
   (`replace`) and, via the declaration fallback, for npm/crates values with
   git/url/path/alias forms; lockfile-level npm/pnpm/crates redirect detection

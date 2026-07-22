@@ -24,6 +24,7 @@ inputs:
       Cargo.lock
       package.json
       Cargo.toml
+      pnpm-workspace.yaml
   deps:
     description: >
       Override: a newline-separated depsound list to review (`<eco>:<name> <from>
