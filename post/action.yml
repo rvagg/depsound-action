@@ -74,9 +74,14 @@ runs:
           } catch (e) { /* no report.json (failure or grouped): generic placeholder */ }
 
           const runCmd = `go run github.com/rvagg/depsound/cmd/depsound@${meta.version || 'latest'}`;
-          const reproduce = refs.length === 1
-            ? `<code>${runCmd} ${esc(refs[0].replace(' -> ', ' '))}</code>`
-            : `<code>${runCmd} &lt;eco&gt;:&lt;name&gt; &lt;from&gt; &lt;to&gt;</code>`;
+          // report.json holds the exact refs, so a grouped PR gets a runnable
+          // bulk block; the placeholder is only for a report we could not read
+          const arg = r => esc(r.replace(' -> ', ' '));
+          const reproduce = refs.length === 0
+            ? `<code>${runCmd} &lt;eco&gt;:&lt;name&gt; &lt;from&gt; &lt;to&gt;</code>`
+            : refs.length === 1
+              ? `<code>${runCmd} ${arg(refs[0])}</code>`
+              : `<pre>printf '%s\\n' \\\n${refs.map(r => `  '${arg(r)}' \\`).join('\n')}\n  | ${runCmd} bulk</pre>`;
 
           // the local run does far more than the summary above: the full
           // per-file analysis plus a persisted, grep-able workspace an agent
