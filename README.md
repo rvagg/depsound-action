@@ -30,9 +30,9 @@ If the analysis itself fails, the action still posts an **"analysis incomplete"*
 comment rather than going silent, since silence on a broken run would read as a
 clean approval.
 
-Because depsound fetches the *published* artifact and its output is reproducible
-from public registry data, there is nothing to host: the report lives in the PR
-and the workspace regenerates on demand.
+Public registry artifacts are usually reproducible, but registries can remove a
+malicious release. The PR report remains available; preserving the exact
+reviewed archives and workspace through a takedown is queued below.
 
 ## Usage
 
@@ -137,6 +137,11 @@ boundaries:
   lockfile alone (exact + transitive). Go is unaffected (`go.mod` is always
   both declaration and resolution). pnpm **catalog** bumps (ranges centralized
   in `pnpm-workspace.yaml`) are detected the same way.
+- **Registry takedowns.** The workflow artifact currently stores the rendered
+  report and JSON, not the downloaded registry archives or extracted workspace.
+  If a registry removes a release, a later deep re-run may be impossible even
+  for a public package. Evidence-pack retention is queued; until then, preserve
+  the depsound cache or Cargo cache when investigating an incident.
 - **Redirects.** A dependency pointed off the registry is flagged for **Go**
   (`replace`) and, via the declaration fallback, for npm/crates values with
   git/url/path/alias forms; lockfile-level npm/pnpm/crates redirect detection
