@@ -19,8 +19,8 @@ newcomer's) it:
   Dependabot);
 - upserts a single **sticky comment** (one per PR, edited in place across
   rebases) with a plain-language headline and the signals worth weighing;
-- uploads the full depsound report as a workflow **artifact** for anyone, or any
-  agent, who wants the detail;
+- uploads the report and bounded review evidence as a workflow **artifact**:
+  available package archives, integrity metadata, diffs and inert file copies;
 - sets a **neutral check** (never success/failure) that branch protection can
   require. The check and the comment are written independently (one failing
   never suppresses the other), and both upsert on the PR head so reruns do not
@@ -30,9 +30,14 @@ If the analysis itself fails, the action still posts an **"analysis incomplete"*
 comment rather than going silent, since silence on a broken run would read as a
 clean approval.
 
-Public registry artifacts are usually reproducible, but registries can remove a
-malicious release. The PR report remains available; preserving the exact
-reviewed archives and workspace through a takedown is queued below.
+One analysis produces the PR summary, JSON and retained evidence, so they describe
+the same run. If a registry later removes a release, the workflow artifact keeps
+the bytes collected during review. `evidence/manifest.json` maps retained files
+and records hashes, limits and omissions. Treat all package contents as untrusted
+data, never executable instructions.
+
+Artifacts follow the repository's GitHub Actions access and retention controls.
+Private dependencies may put private code in the artifact; review who can read it.
 
 ## Usage
 
@@ -83,8 +88,8 @@ The compute action ([`rvagg/depsound-action`](action.yml)):
 |---|---|
 | `manifests` | newline list of manifest/lockfile **base names** to watch on a PR, matched at any path (default: `go.mod`, the three lockfiles, and the declaration fallbacks `package.json`, `Cargo.toml`, `pnpm-workspace.yaml`). A changed lockfile is preferred over the declaration file beside it (exact + transitive). See [Current limitations](#current-limitations) |
 | `deps` | override: a newline depsound list (`<eco>:<name> <from> <to>` bump, `<eco>:<name> <version>` new dep, or `redirect <eco>:<name> <target>`); when set, PR detection is skipped |
-| `depsound-version` | the depsound release to download and verify (default `v0.35.1`) |
-| `depsound-sha256` | caller-supplied sha256 for the platform asset; required only when `depsound-version` is overridden to a release without build-provenance attestations |
+| `depsound-version` | the depsound release to download and verify (default `v0.36.0`; requires `v0.36.0` or later for evidence export) |
+| `depsound-sha256` | optional caller-supplied sha256 for the platform asset; takes precedence over attestation verification and is required for a selected release without attestations |
 | `cooldown` | days, forwarded to depsound `--cooldown` to match an install cooldown |
 | `github-token` | token to checkout the PR and download the release (defaults to the job token) |
 
@@ -137,11 +142,11 @@ boundaries:
   lockfile alone (exact + transitive). Go is unaffected (`go.mod` is always
   both declaration and resolution). pnpm **catalog** bumps (ranges centralized
   in `pnpm-workspace.yaml`) are detected the same way.
-- **Registry takedowns.** The workflow artifact currently stores the rendered
-  report and JSON, not the downloaded registry archives or extracted workspace.
-  If a registry removes a release, a later deep re-run may be impossible even
-  for a public package. Evidence-pack retention is queued; until then, preserve
-  the depsound cache or Cargo cache when investigating an incident.
+- **Retention is bounded.** Archives already unavailable at review time cannot
+  be recovered by this Action. Large files or trees can also exceed export
+  limits. Check `evidence/manifest.json` before assuming every byte was retained.
+  Stored `.crate` archives can be supplied to depsound's local-artifact flags
+  when continuing an investigation after a takedown.
 - **Redirects.** A dependency pointed off the registry is flagged for **Go**
   (`replace`) and, via the declaration fallback, for npm/crates values with
   git/url/path/alias forms; lockfile-level npm/pnpm/crates redirect detection

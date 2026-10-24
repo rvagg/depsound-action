@@ -33,15 +33,15 @@ inputs:
     required: false
     default: ""
   depsound-version:
-    description: The depsound release tag to download and pin.
+    description: The depsound release tag to download and pin (v0.36.0 or later).
     required: false
-    default: v0.35.1
+    default: v0.36.0
   depsound-sha256:
     description: >
       sha256 of the release asset for this runner's platform, an independent
       anchor supplied by the caller. Required when depsound-version is
-      overridden to a release without build-provenance attestations; ignored
-      otherwise (attestation verification is the default anchor).
+      overridden to a release without build-provenance attestations. When set,
+      it takes precedence over attestation verification.
     required: false
     default: ""
   cooldown:
@@ -197,12 +197,12 @@ runs:
           echo "tripped=false" >> "$GITHUB_OUTPUT"
           exit 0
         fi
-        out="$RUNNER_TEMP/depsound-report"
-        mkdir -p "$out"
+        out=$(mktemp -d "$RUNNER_TEMP/depsound-report.XXXXXX")
+        echo "report-dir=$out" >> "$GITHUB_OUTPUT"
         common=(bulk --file="$LIST")
         [ -n "$COOLDOWN" ] && common+=("--cooldown=$COOLDOWN")
-        depsound "${common[@]}" --format=markdown > "$out/comment.md"
-        depsound "${common[@]}" --format=json    > "$out/report.json"
+        depsound "${common[@]}" --format=markdown --evidence-dir="$out/evidence" > "$out/comment.md"
+        cp "$out/evidence/report.json" "$out/report.json"
         title=$(sed -n 's/^<!-- depsound-title: \(.*\) -->$/\1/p' "$out/comment.md" | head -1)
         # derive tripped from depsound's authoritative title, never a body grep: a
         # mixed PR foots "N others: no signals tripped", which a body grep misreads
@@ -219,7 +219,6 @@ runs:
         {
           echo "title=$title"
           echo "tripped=$tripped"
-          echo "report-dir=$out"
           echo "markdown<<__DEPSOUND_MD__"
           cat "$out/comment.md"
           echo "__DEPSOUND_MD__"
@@ -229,14 +228,19 @@ runs:
       id: fail
       if: ${{ failure() }} # any earlier step died: leave a report so the poster still speaks
       shell: bash
+      env:
+        REPORT_DIR: ${{ steps.run.outputs.report-dir }}
+        VERSION: ${{ inputs.depsound-version }}
       run: |
-        out="$RUNNER_TEMP/depsound-report"
-        mkdir -p "$out"
-        # only synthesize a failure marker if a real report was not produced
-        if [ ! -f "$out/meta.json" ]; then
-          pr=$(jq -r '.pull_request.number // empty' "$GITHUB_EVENT_PATH")
-          jq -n --arg pr "$pr" '{pr: $pr, failed: true, title: "depsound: analysis incomplete"}' > "$out/meta.json"
+        set -euo pipefail
+        out="${REPORT_DIR:-}"
+        if [ -z "$out" ]; then
+          out=$(mktemp -d "$RUNNER_TEMP/depsound-report.XXXXXX")
         fi
+        pr=$(jq -r '.pull_request.number // empty' "$GITHUB_EVENT_PATH")
+        jq -n --arg pr "$pr" --arg ver "$VERSION" \
+          '{pr: $pr, version: $ver, failed: true, title: "depsound: analysis incomplete"}' > "$out/meta.json"
+        echo "report-dir=$out" >> "$GITHUB_OUTPUT"
         echo "report=true" >> "$GITHUB_OUTPUT"
 
     - name: Upload report
@@ -246,5 +250,5 @@ runs:
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: depsound-report
-        path: ${{ runner.temp }}/depsound-report
+        path: ${{ steps.run.outputs.report-dir || steps.fail.outputs.report-dir }}
         if-no-files-found: ignore

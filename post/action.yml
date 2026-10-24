@@ -60,8 +60,8 @@ runs:
           if (failed) {
             body = `**depsound** · analysis incomplete\n\n`
               + `depsound could not complete its review of this PR's dependency `
-              + `changes (see the run logs). This is not a clean result: the `
-              + `changes were not assessed.\n`;
+              + `changes (see the run logs). Do not treat this incomplete run as `
+              + `approval. Inspect any retained evidence before deciding.\n`;
           } else {
             body = fs.readFileSync('report/comment.md', 'utf8');
           }
@@ -93,11 +93,14 @@ runs:
               ? `This is a starting point, not a pass. Run locally for full analysis and grep-able workspace (trees + stats.json) for agent investigation:`
               : `Continue locally, the full per-file analysis and a grep-able workspace (trees + stats.json) are available for agent investigation:`;
           const skillUrl = 'https://github.com/rvagg/depsound/blob/master/skills/review-dependency-change/SKILL.md';
+          const artifactLabel = fs.existsSync('report/evidence/manifest.json')
+            ? 'report + retained evidence + logs'
+            : 'report + logs';
           const footer =
             `${reproLead}\n`
             + `<blockquote>${reproduce}</blockquote>\n`
             + `Or hand this PR to an agent: point it at the PR and the <a href="${skillUrl}">review skill</a> for a proceed/hold call.\n\n`
-            + `<sub><a href="https://github.com/rvagg/depsound">depsound</a> · <a href="${run.html_url}">full report + logs</a></sub>`;
+            + `<sub><a href="https://github.com/rvagg/depsound">depsound</a> · <a href="${run.html_url}">${artifactLabel}</a></sub>`;
           const withExtras = body.includes(marker)
             ? body.replace(marker, `\n\n${footer}\n${marker}`)
             : `${body}\n\n${footer}\n${marker}`;
