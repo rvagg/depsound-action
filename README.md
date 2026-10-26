@@ -101,7 +101,7 @@ The compute action ([`rvagg/depsound-action`](action.yml)):
 |---|---|
 | `manifests` | newline list of manifest/lockfile **base names** to watch on a PR, matched at any path (default: `go.mod`, the three lockfiles, and the declaration fallbacks `package.json`, `Cargo.toml`, `pnpm-workspace.yaml`). A changed lockfile is preferred over the declaration file beside it (exact + transitive). See [Current limitations](#current-limitations) |
 | `deps` | override: a newline depsound list (`<eco>:<name> <from> <to>` bump, `<eco>:<name> <version>` new dep, or `redirect <eco>:<name> <target>`); when set, PR detection is skipped |
-| `depsound-version` | the depsound release to download and verify (default `v0.36.0`; requires `v0.36.0` or later for evidence export) |
+| `depsound-version` | the depsound release to download and verify (default `v0.37.0`; requires `v0.36.0` or later for evidence export) |
 | `depsound-sha256` | optional caller-supplied sha256 for the platform asset; takes precedence over attestation verification and is required for a selected release without attestations |
 | `cooldown` | days, forwarded to depsound `--cooldown` to match an install cooldown |
 | `github-token` | token to checkout the PR and download the release (defaults to the job token) |
