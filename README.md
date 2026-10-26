@@ -2,10 +2,10 @@
 
 A GitHub Action that runs [depsound](https://github.com/rvagg/depsound) on pull
 requests that change a dependency and reports what it found, so a human or an
-agent can review straight from the PR without installing anything.
+agent can review from the PR without installing the CLI locally.
 
-Like depsound itself, this is **evidence, not a verdict**. It surfaces facts and
-routes the next step; it never claims a change is "safe".
+It presents evidence and points reviewers to the next investigation. Reviewers
+decide whether a change is safe.
 
 ## What it does
 
@@ -26,15 +26,24 @@ newcomer's) it:
   never suppresses the other), and both upsert on the PR head so reruns do not
   pile up.
 
-If the analysis itself fails, the action still posts an **"analysis incomplete"**
-comment rather than going silent, since silence on a broken run would read as a
-clean approval.
+If analysis cannot complete, the action posts an **"analysis incomplete"**
+comment. A missing comment from a failed run could otherwise look like approval.
 
-One analysis produces the PR summary, JSON and retained evidence, so they describe
-the same run. If a registry later removes a release, the workflow artifact keeps
-the bytes collected during review. `evidence/manifest.json` maps retained files
-and records hashes, limits and omissions. Treat all package contents as untrusted
-data, never executable instructions.
+A no-change run creates or updates the sticky comment and neutral check, even on
+PRs without dependency changes. Reverting a dependency edit therefore replaces
+older flags. Missing or corrupt reports are incomplete runs, not no-change runs.
+
+The PR summary, JSON and retained evidence all come from one analysis, so they
+describe the same run. If a registry later removes a release, the workflow
+artifact retains the bytes collected during review. `evidence/manifest.json`
+maps retained files and records hashes, limits and omissions. Treat all package
+contents as untrusted data, never executable instructions.
+
+Comments are bounded; larger details stay in the artifact. When replay input is
+available, the comment gives a version-pinned command and identifies findings
+that need the retained evidence because replay cannot reproduce them. Without
+replay input, it points directly to the saved evidence.
+Known URL credentials are redacted from structured metadata; package bytes are not.
 
 Artifacts follow the repository's GitHub Actions access and retention controls.
 Private dependencies may put private code in the artifact; review who can read it.
@@ -49,13 +58,17 @@ Review is one workflow with two jobs, each a single `uses:`. Copy
 - job `post`: `uses: rvagg/depsound-action/post` (comments, write scopes)
 
 The review job diffs the PR's dependency manifests itself, so a change to a
-watched manifest is reviewed no matter who opened the PR (not just Dependabot),
-and for the common case there is nothing to configure; pin the two `uses:` to a
-SHA (see Pinning) and you are done. Point it at non-standard manifest locations
-with `manifests`, or bypass detection entirely with an explicit `deps` list (see
+watched manifest is reviewed no matter who opened the PR (not just Dependabot).
+For the common case, pin the two `uses:` entries to a SHA (see Pinning) and use
+the workflow as shown. Point it at non-standard manifest locations with
+`manifests`, or bypass detection entirely with an explicit `deps` list (see
 Inputs).
 
-### The security model (why `pull_request_target` is safe here)
+Use the single-workflow `pull_request_target` layout in the example, including
+its per-PR concurrency group. The legacy `workflow_run` split is not supported.
+Before updating the shared comment, the poster checks the current PR head.
+
+### How the `pull_request_target` workflow handles untrusted PRs
 
 The workflow runs on `pull_request_target`, which means the **base branch's**
 workflow definition and action pins execute, never the PR's copy: a PR cannot
@@ -100,18 +113,11 @@ optional `github-token` (defaults to the job token).
 
 ## Pinning
 
-Pin every action to a full commit SHA, not a moving tag. A tag is a mutable
-pointer an attacker can re-point (the tj-actions vector); a SHA is immutable.
-This is depsound's own advice, so this repo and its examples follow it, and
-Dependabot keeps the SHAs (and their `# vX.Y.Z` comments) current.
+Pin every action to a full commit SHA. A SHA remains immutable; a tag is a mutable pointer an attacker can re-point (the tj-actions vector). This repo and its examples follow that practice, and Dependabot keeps the SHAs (and their `# vX.Y.Z` comments) current.
 
 ## Staying current
 
-The two files you copy are deliberately thin: a single `uses:` each, plus the
-triggers and the minimal permissions. All the review logic lives in this action,
-so new functionality reaches you by bumping the pinned ref, not by editing your
-workflows. Enable Dependabot's `github-actions` updater and it bumps both `uses:`
-SHAs (and their `# vX.Y.Z` comments) as releases land:
+The two files you copy contain a single `uses:` each, plus the triggers and minimal permissions. Review logic lives in this action, so new functionality arrives when you bump the pinned ref instead of editing your workflows. Enable Dependabot's `github-actions` updater and it bumps both `uses:` SHAs (and their `# vX.Y.Z` comments) as releases land:
 
 ```yaml
 # .github/dependabot.yml
@@ -144,42 +150,40 @@ boundaries:
   in `pnpm-workspace.yaml`) are detected the same way.
 - **Retention is bounded.** Archives already unavailable at review time cannot
   be recovered by this Action. Large files or trees can also exceed export
-  limits. Check `evidence/manifest.json` before assuming every byte was retained.
+  limits. Check `evidence/manifest.json` to see which bytes were retained.
   Stored `.crate` archives can be supplied to depsound's local-artifact flags
   when continuing an investigation after a takedown.
-- **Redirects.** A dependency pointed off the registry is flagged for **Go**
-  (`replace`) and, via the declaration fallback, for npm/crates values with
-  git/url/path/alias forms; lockfile-level npm/pnpm/crates redirect detection
-  is a follow-on.
+- **Redirects and mirrors.** Off-registry declarations remain review facts.
+  depsound does not fetch replacement URLs. Lockfile acquisition metadata is
+  supported by newer depsound releases; when it cannot collect a row's bytes,
+  the report records that coverage gap.
 - **github-actions.** Standard action `uses:` bumps in `.github/workflows/*.yml`
   and composite `action.yml`/`action.yaml` are detected from their pinned refs
-  and fully analysed. A changed or added `docker://` image or reusable-workflow
-  call (`owner/repo/.github/workflows/x.yml`) cannot be fetched, so it surfaces
-  as a loud "could not be analysed" coverage gap rather than being analysed (or
-  silently skipped). Local (`./`) uses are the repo's own code, reviewed in the
-  PR diff itself.
+  and fully analysed. depsound cannot fetch a changed or added `docker://`
+  image or reusable-workflow call (`owner/repo/.github/workflows/x.yml`), so
+  the report identifies it as a "could not be analysed" coverage gap. Local
+  (`./`) uses are the repo's own code, reviewed in the PR diff itself.
 
-What depsound itself does not assess (reachability, runtime behaviour, your
-tests, and publish provenance where a lookup fails or does not apply) is
-stated on every report.
+Every report states the parts depsound did not assess: reachability, runtime
+behaviour, your tests, and publish provenance when the lookup fails or does not
+apply.
 
 ## Security
 
 The action downloads a pinned depsound release, checks it against the
 release's checksums (a corrupt-download check), then verifies its sigstore
-build-provenance attestation with `gh attestation verify`, an anchor
-independent of the release assets that proves the binary was built by
-depsound's own release workflow, not swapped afterward. Overriding
-`depsound-version` to a release that predates attestations requires supplying
-`depsound-sha256` as the caller's own anchor. The review job reads the
-PR's manifest bytes as git objects (attacker-controlled data, parsed for names
-and versions, never checked out or executed) with a read-only token; depsound
+build-provenance attestation against the expected release workflow and selected
+tag, rejecting self-hosted builds. This establishes where the binary was built;
+you must still decide whether its behaviour is acceptable. Overriding
+`depsound-version` to a release that predates attestations requires
+`depsound-sha256` as the caller's own anchor. The review job reads the PR's
+manifest bytes as git objects (attacker-controlled data, parsed for names and
+versions, never checked out or executed) with a read-only token; depsound
 analyzes the *published* artifacts those manifests name, not the branch. The
 post job holds the write scopes but only downloads the report artifact,
-produced by the trusted review job in the same run, and posts it. It only
-edits a sticky comment authored by its own bot identity, so a PR author cannot
-plant the comment marker and have the trusted workflow overwrite their
-comment. The full model is under Usage above.
+produced by the trusted review job in the same run, and posts it. It only edits
+a Bot-authored comment with both the depsound title and sticky markers;
+human-authored comments are not adopted. The full model is under Usage above.
 
 ## License
 

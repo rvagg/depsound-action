@@ -89,7 +89,7 @@ runs:
         set -euo pipefail
         if ! git cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null; then
           # transient auth for this one fetch (checkout dropped its credentials)
-          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
+          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')
           git -c http.extraheader="AUTHORIZATION: basic $auth" \
             fetch --no-tags origin "refs/pull/$PR/head"
         fi
@@ -127,7 +127,9 @@ runs:
         if [ -n "$EXPECT_SHA256" ]; then
           if command -v sha256sum >/dev/null; then verify="sha256sum -c -"; else verify="shasum -a 256 -c -"; fi
           echo "$EXPECT_SHA256  $dir/$asset" | $verify
-        elif ! gh attestation verify "$dir/$asset" --repo rvagg/depsound; then
+        elif ! gh attestation verify "$dir/$asset" --repo rvagg/depsound \
+          --signer-workflow rvagg/depsound/.github/workflows/release-binaries.yml \
+          --source-ref "refs/tags/$VERSION" --deny-self-hosted-runners; then
           echo "::error::build-provenance attestation verification failed for $asset ($VERSION)." \
             "If this version predates attested releases, supply depsound-sha256; otherwise treat the asset as suspect."
           exit 1
@@ -153,8 +155,8 @@ runs:
           # the diff only says WHICH manifests changed; the change set comes
           # from parsing both full versions (detect), never from diff text
           mb=$(git merge-base "$BASE_SHA" "$HEAD_SHA")
-          declare -A want
-          while IFS= read -r m; do m="${m//[[:space:]]/}"; [ -n "$m" ] && want["$m"]=1; done <<< "$MANIFESTS"
+          want=()
+          while IFS= read -r m; do m="${m//[[:space:]]/}"; [ -n "$m" ] && want+=("$m"); done <<< "$MANIFESTS"
           pairs="$RUNNER_TEMP/depsound-pairs.tsv"
           : > "$pairs"
           while IFS= read -r f; do
@@ -165,7 +167,9 @@ runs:
             # LOCATION: a workflow under .github/workflows/, or a composite
             # action.yml/action.yaml. depsound's detect parses their `uses:` pins.
             keep=
-            if [ -n "${want[$base]:-}" ]; then keep=1; fi
+            for m in "${want[@]}"; do
+              if [ "$base" = "$m" ]; then keep=1; break; fi
+            done
             case "$dir" in
               */.github/workflows|.github/workflows) case "$base" in *.yml|*.yaml) keep=1 ;; esac ;;
             esac
@@ -190,32 +194,40 @@ runs:
         CHANGED: ${{ steps.detect.outputs.changed }}
         COOLDOWN: ${{ inputs.cooldown }}
         VERSION: ${{ inputs.depsound-version }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       run: |
         set -euo pipefail
-        if [ "$CHANGED" != "true" ] || [ ! -s "$LIST" ]; then
-          echo "no dependency changes to review"
-          echo "tripped=false" >> "$GITHUB_OUTPUT"
-          exit 0
-        fi
         out=$(mktemp -d "$RUNNER_TEMP/depsound-report.XXXXXX")
         echo "report-dir=$out" >> "$GITHUB_OUTPUT"
+        pr=$(jq -r '.pull_request.number // empty' "$GITHUB_EVENT_PATH")
+        if [ "$CHANGED" != "true" ] || [ ! -s "$LIST" ]; then
+          jq -n --arg pr "$pr" --arg ver "$VERSION" --arg base "$BASE_SHA" --arg head "$HEAD_SHA" \
+            '{state: "no-changes", pr: $pr, version: $ver, baseSha: $base, headSha: $head,
+              title: "depsound: no dependency changes", tripped: false}' > "$out/meta.json"
+          echo "tripped=false" >> "$GITHUB_OUTPUT"
+          echo "title=depsound: no dependency changes" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
         common=(bulk --file="$LIST")
         [ -n "$COOLDOWN" ] && common+=("--cooldown=$COOLDOWN")
         depsound "${common[@]}" --format=markdown --evidence-dir="$out/evidence" > "$out/comment.md"
         cp "$out/evidence/report.json" "$out/report.json"
+        # Older versions save the evidence without a rerun input file.
+        # The poster links to that evidence for manual inspection.
+        if [ -f "$out/evidence/review-input.json" ]; then
+          cp "$out/evidence/review-input.json" "$out/review-input.json"
+        fi
         title=$(sed -n 's/^<!-- depsound-title: \(.*\) -->$/\1/p' "$out/comment.md" | head -1)
-        # derive tripped from depsound's authoritative title, never a body grep: a
-        # mixed PR foots "N others: no signals tripped", which a body grep misreads
-        # as clean. Unknown title errs toward flagging (silence is not safety).
         case "$title" in
           *"flagged for review"*) tripped=true ;;
           *"no signals tripped"*) tripped=false ;;
           *) tripped=true ;;
         esac
-        pr=$(jq -r '.pull_request.number // empty' "$GITHUB_EVENT_PATH")
-        # version pins the reproduce command to the exact analyzer run
-        jq -n --arg pr "$pr" --arg title "$title" --arg ver "$VERSION" --argjson tripped "$tripped" \
-          '{pr: $pr, title: $title, version: $ver, tripped: $tripped}' > "$out/meta.json"
+        jq -n --arg pr "$pr" --arg title "$title" --arg ver "$VERSION" --arg base "$BASE_SHA" --arg head "$HEAD_SHA" \
+          --argjson tripped "$tripped" \
+          '{state: "complete", pr: $pr, title: $title, version: $ver, baseSha: $base, headSha: $head, tripped: $tripped}' \
+          > "$out/meta.json"
         {
           echo "title=$title"
           echo "tripped=$tripped"
@@ -226,11 +238,13 @@ runs:
 
     - name: Failure report
       id: fail
-      if: ${{ failure() }} # any earlier step died: leave a report so the poster still speaks
+      if: ${{ failure() }}
       shell: bash
       env:
         REPORT_DIR: ${{ steps.run.outputs.report-dir }}
         VERSION: ${{ inputs.depsound-version }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       run: |
         set -euo pipefail
         out="${REPORT_DIR:-}"
@@ -238,17 +252,16 @@ runs:
           out=$(mktemp -d "$RUNNER_TEMP/depsound-report.XXXXXX")
         fi
         pr=$(jq -r '.pull_request.number // empty' "$GITHUB_EVENT_PATH")
-        jq -n --arg pr "$pr" --arg ver "$VERSION" \
-          '{pr: $pr, version: $ver, failed: true, title: "depsound: analysis incomplete"}' > "$out/meta.json"
+        jq -n --arg pr "$pr" --arg ver "$VERSION" --arg base "$BASE_SHA" --arg head "$HEAD_SHA" \
+          '{state: "incomplete", pr: $pr, version: $ver, baseSha: $base, headSha: $head,
+            title: "depsound: analysis incomplete"}' > "$out/meta.json"
         echo "report-dir=$out" >> "$GITHUB_OUTPUT"
         echo "report=true" >> "$GITHUB_OUTPUT"
 
     - name: Upload report
-      # upload on success (a produced report) OR failure (the synthesized marker),
-      # so a compute failure is not silent; a no-change run uploads nothing
       if: ${{ always() && (steps.run.outputs.report-dir != '' || steps.fail.outputs.report == 'true') }}
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: depsound-report
         path: ${{ steps.run.outputs.report-dir || steps.fail.outputs.report-dir }}
-        if-no-files-found: ignore
+        if-no-files-found: error

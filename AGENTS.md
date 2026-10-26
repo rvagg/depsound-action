@@ -81,15 +81,15 @@ pull_request_target (base branch's workflow and pins execute, never the PR's cop
 |                            bulk list (never the diff text)
 |    run                     `depsound bulk --file=list --format=markdown --evidence-dir=out/evidence`
 |                            comment.md, report.json (copied from evidence), meta.json
-|    failure report          on any earlier failure: meta.json with failed: true
+|    status envelope         complete, no-changes or incomplete, bound to the event head
 |    upload-artifact         the report directory only, name depsound-report
 |
 |- job post     needs: review   if: always() && result != cancelled
      permissions: pull-requests: write, checks: write, actions: read
-     download-artifact       same run; absent artifact means no dependency change, stay silent
-     github-script           upsert the neutral check on the head sha; upsert one Bot-authored
-                             comment carrying the marker; footer with reproduce command,
-                             agent hand-off, artifact link; a failed write fails the job
+     download-artifact       same run; missing/corrupt report means incomplete, never no-changes
+     github-script           neutral per-head check and bounded Bot-authored sticky comment;
+                             explicit no-change state replaces older flags; current-head check
+                             before writing; typed replay input or evidence-only handoff
 ```
 
 Files:
@@ -97,9 +97,9 @@ Files:
 - `action.yml` the compute action. Inputs `manifests`, `deps`,
   `depsound-version`, `depsound-sha256`, `cooldown`, `github-token`;
   outputs `markdown`, `title`, `tripped`.
-- `post/action.yml` the poster. Input `github-token` only. It also still
-  handles the legacy `workflow_run` split (reading the compute run id and
-  the artifact's `meta.pr`), which `_archive/` preserves.
+- `post/action.yml` and `post/post.cjs` the poster, with Node tests alongside.
+  Input `github-token` only. Only the same-run `pull_request_target` layout is
+  supported; legacy `workflow_run` posting is rejected.
 - `examples/depsound.yml` the file consumers copy, with the security notes
   in comments. `.github/workflows/depsound.yml` is the same file dogfooding
   this repository.
@@ -124,12 +124,13 @@ Files:
 
 ### What the post job may and may not do
 
-- It reads three files from the artifact: `meta.json`, `comment.md`,
-  `report.json` (for the exact refs in the reproduce command). It never
-  reads, parses or executes anything under `evidence/`.
-- It adopts only a marked comment whose author is a Bot, so a PR author
-  cannot plant the marker and have the trusted workflow overwrite their
-  comment.
+- It reads `meta.json`, `comment.md`, and optional `review-input.json`. Rerun
+  commands use that input file. When it is missing, the comment tells the reader
+  to inspect the saved report and files instead. Evidence is never executed.
+- It adopts only a Bot-authored comment with both the depsound title and sticky
+  markers. Comments are bounded in UTF-8 bytes and retain the artifact route.
+- An explicit no-change envelope still upserts a neutral check and scoped comment.
+  The event head must match the envelope; the current PR head is checked before the comment write.
 - In the same-run layout the PR number comes from the trusted event, never
   from the artifact.
 - The check and the comment are independent writes with retries; one
@@ -265,16 +266,12 @@ For an agent asked to improve this project without a brief. The report-only
 core is complete; the queued layers are about turning facts into gates
 without the tool ever claiming "safe". Good work, roughly in order of value:
 
-- **Policy layer.** Optional, declarative repository rules over the factual
-  fields of the report (for example: no new execution surface, no breaking
-  compat change, no introduced advisory means eligible). Configuration, not
-  intelligence. It is the only layer allowed to escalate the check to
-  `action_required`, and even then it states the rule that fired, never a
-  grade. Design it against `report.json`, keep the default check neutral.
-- **Cooldown from the consumer's Dependabot config.** Read
-  `.github/dependabot.yml` for per-ecosystem `cooldown` days and forward it
-  as `--cooldown`, so the review matches the repository's own policy without
-  an input.
+- **Policy layer.** Optional repository rules over factual fields, only after
+  unknown, uncollected and measured zero remain distinct throughout the contract.
+  This is the only layer allowed to escalate the check; the default stays neutral.
+- **Installer cooldown.** Derive resolution policy from committed installer
+  settings such as pnpm `minimumReleaseAge`, not Dependabot's PR-opening cooldown.
+  Exact target age/admit-after facts remain separate from eligibility decisions.
 - **The PR's own control surface as facts.** A dependency PR is wider than
   the package bytes: inventory non-manifest executable source, workflow
   files, setup or bootstrap scripts, weakened package-manager policy
