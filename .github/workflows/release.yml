@@ -1,0 +1,116 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    # Tag rulesets enforce creation authority; this actor check is additional.
+    if: github.repository == 'rvagg/depsound-action' && github.ref_type == 'tag' && github.actor == 'rvagg'
+    name: Check approved tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout approved tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check tag and release metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          [[ "$GITHUB_REF" == "refs/tags/$tag" && "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$(git rev-parse "$GITHUB_REF^{commit}")" == "$GITHUB_SHA" ]]
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/master
+          [[ "v$(cat .github/version.txt)" == "$tag" ]]
+          [[ "$(jq -r '.["."]' .github/release-please-manifest.json)" == "${tag#v}" ]]
+          python3 .github/scripts/release-notes.py "$tag" > "$RUNNER_TEMP/release-notes.md"
+      - name: Verify the CLI download default
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          defaults=$(ruby -rjson -rpsych -e '
+            inputs = Psych.safe_load(File.read("action.yml"), aliases: false).fetch("inputs")
+            puts JSON.generate({
+              version: inputs.fetch("depsound-version").fetch("default"),
+              sha256: inputs.fetch("depsound-sha256").fetch("default")
+            })
+          ')
+          VERSION=$(jq -r .version <<<"$defaults")
+          EXPECT_SHA256=$(jq -r .sha256 <<<"$defaults")
+          export VERSION EXPECT_SHA256
+          bash .github/scripts/download-depsound.sh
+      - name: Retain release notes
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-notes-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-notes.md
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish approved tag
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - name: Download this run's release notes
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-notes-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release-notes
+      - name: Publish prepared release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          require_tag() {
+            local object kind sha i
+            object=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq .object)
+            for ((i = 0; i < 16; i++)); do
+              kind=$(jq -r .type <<<"$object")
+              sha=$(jq -r .sha <<<"$object")
+              if [[ "$kind" == commit ]]; then
+                [[ "$sha" == "$GITHUB_SHA" ]]
+                return
+              fi
+              [[ "$kind" == tag && "$sha" =~ ^[0-9a-f]{40}$ ]] || return 1
+              object=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$sha" --jq .object)
+            done
+            return 1
+          }
+          require_tag
+          existing=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100")
+          jq -e --arg tag "$tag" 'all(.[][]; .tag_name != $tag)' <<<"$existing"
+          payload=$(jq -n --arg tag "$tag" --arg sha "$GITHUB_SHA" --rawfile notes release-notes/release-notes.md \
+            '{tag_name: $tag, target_commitish: $sha, name: $tag, body: $notes, draft: true}')
+          release=$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" --input - <<<"$payload")
+          jq -e --arg tag "$tag" --arg sha "$GITHUB_SHA" \
+            '.draft == true and .tag_name == $tag and .target_commitish == $sha and (.assets | length) == 0' <<<"$release"
+          id=$(jq -er '.id | select(type == "number")' <<<"$release")
+          require_tag
+          release=$(gh api "repos/$GITHUB_REPOSITORY/releases/$id")
+          jq -e --arg tag "$tag" --arg sha "$GITHUB_SHA" \
+            '.draft == true and .tag_name == $tag and .target_commitish == $sha and (.assets | length) == 0' <<<"$release"
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$id" -F draft=false
+          release=$(gh api "repos/$GITHUB_REPOSITORY/releases/$id")
+          jq -e '.draft == false and .immutable == true and (.assets | length) == 0' <<<"$release"

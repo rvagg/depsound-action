@@ -172,11 +172,12 @@ apply.
 
 The action downloads a pinned depsound release, checks it against the
 release's checksums (a corrupt-download check), then verifies its sigstore
-build-provenance attestation against the expected release workflow and selected
-tag, rejecting self-hosted builds. This establishes where the binary was built;
-you must still decide whether its behaviour is acceptable. Overriding
-`depsound-version` to a release that predates attestations requires
-`depsound-sha256` as the caller's own anchor. The review job reads the PR's
+build-provenance attestation against the expected release workflow, selected
+tag and its resolved commit, rejecting self-hosted builds. The tag identity
+depends on the producer's tag-protection rules. Provenance establishes where
+the binary was built; you must still assess its behaviour. For a release
+without attestations, supply `depsound-sha256` as your own anchor. The review
+job reads the PR's
 manifest bytes as git objects (attacker-controlled data, parsed for names and
 versions, never checked out or executed) with a read-only token; depsound
 analyzes the *published* artifacts those manifests name, not the branch. The

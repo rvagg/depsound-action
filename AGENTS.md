@@ -5,8 +5,8 @@ depsound-action is a GitHub Action that runs
 dependency and reports what it found: one sticky comment, one neutral check,
 one workflow artifact holding the report and the reviewed bytes. It is two
 composite actions (`action.yml` computes, `post/action.yml` publishes) and
-some shell and `github-script` glue. There is no build step and no test
-suite; the files in the repository are what runs.
+some shell and `github-script` glue. There is no build step. CI runs the Node
+poster tests and validates the action YAML and shell blocks.
 
 This file is for coding agents and the people driving them, including agents
 working without a brief. `README.md` is the user manual and the interface
@@ -27,10 +27,10 @@ Everything else follows from it. Judge every change against these, in order:
    job produced in the same run. Collapsing the two jobs, or moving any
    package-derived processing into the post job, is the one change that can
    turn this action into the pwn-request hazard it exists to avoid.
-2. **Always speak.** A check-run alone is silence, and silence reads as
-   approval. A run that analyses posts; a run that fails posts "analysis
-   incomplete"; only a PR with no dependency change posts nothing. The check
-   is always `neutral`, never `success` or `failure`.
+2. **Always speak.** A check-run alone can read as approval. Analysis posts a
+   report; failure posts "analysis incomplete". A PR without dependency changes
+   gets an explicit no-change comment and check. The check is always `neutral`,
+   never `success` or `failure`.
 3. **depsound owns the wording.** The comment body is depsound's
    `--format=markdown` output. The action adds a footer (reproduce command,
    agent hand-off, artifact link) and nothing else. Headline logic, triage
@@ -97,6 +97,8 @@ Files:
 - `action.yml` the compute action. Inputs `manifests`, `deps`,
   `depsound-version`, `depsound-sha256`, `cooldown`, `github-token`;
   outputs `markdown`, `title`, `tripped`.
+- `.github/scripts/download-depsound.sh` verifies the binary for the compute
+  action and the read-only release preflight. It extracts but does not execute it.
 - `post/action.yml` and `post/post.cjs` the poster, with Node tests alongside.
   Input `github-token` only. Only the same-run `pull_request_target` layout is
   supported; legacy `workflow_run` posting is rejected.
@@ -148,8 +150,9 @@ something a CLI release must keep or this repository must follow:
 
 - release assets named `depsound_<ver>_linux_<arch>.tar.gz` and
   `depsound_<ver>_darwin_all.zip`, with `checksums.txt` beside them;
-- a build-provenance attestation on every asset, verifiable with
-  `gh attestation verify <asset> --repo rvagg/depsound`;
+- a build-provenance attestation on every asset, verified against the expected
+  release workflow, selected tag and its peeled commit SHA, rejecting self-hosted
+  builds; the tag identity depends on the producer's tag-protection rules;
 - `depsound detect --file=<pairs.tsv>` reading tab-separated
   `<path> <old> <new>` triples (`-` for an absent side) and printing a bulk
   list;
@@ -165,35 +168,37 @@ something a CLI release must keep or this repository must follow:
   `<eco>:<name> <from> -> <to>` reviewed), so a grouped PR gets a runnable
   `bulk` reproduce block.
 
-The `depsound-version` default is the newest CLI release the action has been
-exercised against. Evidence export needs `v0.36.0` or later. A change here
-that needs a new CLI behaviour waits for that CLI release and bumps the
-default in the same PR, with the download and attestation step re-run
-against the real asset.
+The `depsound-version` default names the CLI version this Action downloads.
+Evidence export needs `v0.36.0` or later. Default changes can be prepared before
+the CLI release, but the Action must not be released until that CLI version is
+published and verified. The maintainer command must check this before tagging;
+the tag workflow repeats it with a read-only token.
 
 ## Making a change
 
-There is no automated test suite. Verification is manual and the PR says
-what was run:
+`.github/workflows/ci.yml` runs the Node tests and YAML/shell validation with
+`contents: read`. Run the same checks locally and say what was exercised:
 
 1. Read the security model in the README and the two "may and may not"
    lists above before touching `action.yml` or `post/action.yml`. State in
    the PR which rule you touched and why it still holds.
-2. Syntax: every `run:` block passes `bash -n`; both YAML files parse. If
-   `actionlint` is available, run it on `.github/workflows/`.
-3. Shell steps: extract the block, set the `env:` it expects, and run it
-   locally against the real attested release binary (download it the way the
-   step does). Cover the no-change path, the failure path (the marker must
-   be written and uploaded) and a wrong `depsound-sha256` (must fail before
-   extraction).
+2. Run `node --check post/post.cjs`, `node --test post/post.test.cjs`, and
+   `ruby .github/scripts/validate-action.rb action.yml post/action.yml`.
+   Also run `bash -n .github/scripts/download-depsound.sh`. The YAML validator
+   checks inline shell blocks; the shared verifier is a separate program.
+3. Download/verification changes need a transport fixture that covers published,
+   draft, checksum, signer, source-SHA and supplied-digest paths. Failed integrity
+   or provenance must stop before extraction. Test real assets only when
+   authorised.
+   Cover the no-change and failure paths too: incomplete analysis must still be
+   reported and uploaded.
 4. The poster: run the `github-script` body under Node with the `github`,
    `context` and `core` objects stubbed and the writes logged, against a
    report directory from step 3. Check the Bot-author rule, the marker
    splice, the reproduce command for one ref and for several.
-5. End to end: open a PR on a repository you control that uses your branch's
-   sha, and read the comment as a reviewer would. The dogfood workflow here
-   runs the pinned release, not your branch, so it will not exercise an
-   unreleased change.
+5. A live end-to-end run needs explicit authorisation. Use a controlled
+   repository and the proposed branch SHA, then read the comment as a reviewer.
+   The pinned dogfood workflow does not exercise an unreleased change.
 6. Interface change (an input, an output, the artifact layout, a permission):
    update the README tables and `examples/depsound.yml` in the same PR. A
    new permission or trigger is a breaking change.
@@ -211,10 +216,9 @@ what was run:
   rather than what it does. Never what changed or which issue it fixed.
 - Simple language in prose and comments. Short sentences. Plain punctuation:
   no em or en dashes, no emoji, no characters that break alignment.
-- Nothing new at the repository root beyond what Marketplace requires
-  (`action.yml` must be at the root; that is why this is its own repository
-  and not a subdirectory of depsound). Never delete files to tidy; move them
-  to `_archive/`.
+- Keep automation helpers, configuration and version metadata under `.github/`.
+  `action.yml` stays at the root for Marketplace, alongside the public docs
+  and changelog. Never delete files to tidy; move them to `_archive/`.
 
 ## Commits and pull requests
 
@@ -236,29 +240,57 @@ what was run:
 
 ## Releases
 
-There is no version file: the release tag is the version, and the sha it
-points at is what consumers pin. No moving major tag (`@v1`) is maintained;
-consumers pin shas and Dependabot moves them. A release is cut by the
-maintainer, in this order:
+The Action's own version lives in `.github/version.txt`, independently of its
+`depsound-version` download input. Release Please updates that file,
+`CHANGELOG.md` and `.github/release-please-manifest.json` in one preparation PR.
+Its workflow can write branches, PRs and labels, and uses `actions: write` to
+dispatch read-only CI on the exact candidate SHA. It does not create tags or
+GitHub releases. The configured publisher runs only on version-tag pushes.
 
-1. On a clean, up-to-date `master`, commit any pending change and push.
-2. Create the GitHub release `vX.Y.Z` targeted at that exact commit, with
-   generated notes. The tag is created by the release so it can never land
-   on a stale head.
-3. Re-pin every `uses: rvagg/depsound-action` and
-   `rvagg/depsound-action/post` reference to the new sha with a `# vX.Y.Z`
-   comment: `.github/workflows/depsound.yml` and `examples/depsound.yml`
-   here, and depsound's own `.github/workflows/depsound.yml`. Commit as
-   `chore: pin self-references to vX.Y.Z` here and
-   `chore: pin depsound-action to vX.Y.Z` there.
+The maintainer command must verify the candidate, its exact-head CI and the
+repository's tag/environment/immutability settings. It must recheck the base and
+head, merge with a head-SHA lease, require the resulting tree to match the
+candidate, and create the version tag at that merge commit using the
+maintainer's credential. Tag authority follows that account, not tagger email.
 
-The action is also released as the tail of every depsound CLI release: the
-CLI release bumps `depsound-version` in `action.yml` and the README, then
-cuts a patch release here and re-pins. So a CLI release normally produces
-two tags, and a pending change here that deserves its own minor or major
-should be released on its own before the next CLI cascade rather than riding
-an automatic patch bump. Contributors do not release; say in the PR if a
-change needs a CLI release first.
+Before merging an Action candidate, the maintainer command must verify all six
+CLI assets against the protected Go tag and source-bound build attestations.
+The published `depsound-sha256` default must stay empty because archives vary
+by platform. Workflow callers can still supply a platform-specific checksum.
+
+`.github/workflows/release.yml` checks that the tag, source version and tracking
+version agree, then verifies the CLI download default in its read-only job.
+The publisher runs in the tag-restricted `release` environment and consumes
+only this run attempt's notes. It creates its own
+draft, retains the release ID, and publishes that object last. Existing releases
+or drafts for the tag stop the run. This source-only Action attaches no assets;
+the published release must be immutable, with the expected tag and empty asset
+inventory. Consumers pin its commit SHA; there is no moving major alias.
+
+All tags need creation/update/deletion protection. Ruleset bypass must be
+`RepositoryRole: admin` (currently rvagg only), never Write/Maintain roles,
+GitHub Actions, other apps or deploy keys. Adding an administrator changes who
+can release. Immutable releases and the tag-only environment must be enabled
+before tagging; the workflow's actor check is additional protection.
+A write-capable collaborator can still edit or publish drafts before they
+become immutable. Tag rules and published immutability do not close that race.
+
+After verified publication, the maintainer command must relabel the selected
+merged candidate from `autorelease: pending` to `autorelease: tagged`, allowing
+the next candidate. Recovery requires a full workflow rerun for fresh attempt-specific
+artifacts. The maintainer must inspect a partial draft before removing it and
+retrying. Published immutable tags are not moved or reused.
+
+CLI download updates and consumer re-pins are ordinary reviewed changes.
+Land the CLI download default and README update on master before freezing the
+Action candidate. Release Please then refreshes its head/base; its PR changes
+only the version file, manifest and changelog.
+Combined releases must select and show both prepared versions and head/base
+SHAs upfront. The Action candidate must already contain the selected Go
+download version. Verify Go publication before merging and releasing the same
+Action candidate, then re-pin references. CI reruns must check that frozen
+head; drift must stop the flow. Standalone Action and explicit depsound-only
+releases remain supported. The helper must not calculate another version.
 
 ## Direction
 

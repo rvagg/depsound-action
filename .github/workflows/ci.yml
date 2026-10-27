@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      expected_head_sha:
+        description: Candidate commit SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  action:
+    name: Action
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate dispatched revision
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        shell: bash
+        env:
+          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          ACTUAL_HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$EXPECTED_HEAD_SHA" = "$ACTUAL_HEAD_SHA"
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Check Node syntax
+        run: node --check post/post.cjs && node --check post/post.test.cjs
+
+      - name: Test poster
+        run: node --test post/post.test.cjs
+
+      - name: Validate composite actions
+        run: ruby .github/scripts/validate-action.rb action.yml post/action.yml
+
+      - name: Check binary verifier syntax
+        run: bash -n .github/scripts/download-depsound.sh

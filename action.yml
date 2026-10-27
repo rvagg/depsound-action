@@ -100,42 +100,10 @@ runs:
         GH_TOKEN: ${{ inputs.github-token }}
         VERSION: ${{ inputs.depsound-version }}
         EXPECT_SHA256: ${{ inputs.depsound-sha256 }}
+        DEPSOUND_ACTION_PATH: ${{ github.action_path }}
       run: |
         set -euo pipefail
-        os=$(uname -s | tr '[:upper:]' '[:lower:]')
-        arch=$(uname -m)
-        case "$arch" in x86_64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; esac
-        ver="${VERSION#v}"
-        case "$os" in
-          linux)  asset="depsound_${ver}_linux_${arch}.tar.gz" ;;
-          darwin) asset="depsound_${ver}_darwin_all.zip" ;;
-          *) echo "::error::unsupported runner OS: $os" ; exit 1 ;;
-        esac
-        dir="$RUNNER_TEMP/depsound-bin"
-        mkdir -p "$dir"
-        gh release download "$VERSION" --repo rvagg/depsound --dir "$dir" \
-          --pattern "$asset" --pattern checksums.txt --clobber
-        # verify against the release's own checksums: a corrupt-download check,
-        # not an independent anchor against a compromised release
-        ( cd "$dir"
-          if command -v sha256sum >/dev/null; then verify="sha256sum -c -"; else verify="shasum -a 256 -c -"; fi
-          grep " ${asset}\$" checksums.txt | $verify )
-        # now the real anchor. A caller-supplied sha256 wins; otherwise verify
-        # the sigstore attestation, which proves the asset came out of
-        # depsound's release workflow and was not swapped afterward. Versions
-        # older than attested releases need the caller's sha256.
-        if [ -n "$EXPECT_SHA256" ]; then
-          if command -v sha256sum >/dev/null; then verify="sha256sum -c -"; else verify="shasum -a 256 -c -"; fi
-          echo "$EXPECT_SHA256  $dir/$asset" | $verify
-        elif ! gh attestation verify "$dir/$asset" --repo rvagg/depsound \
-          --signer-workflow rvagg/depsound/.github/workflows/release-binaries.yml \
-          --source-ref "refs/tags/$VERSION" --deny-self-hosted-runners; then
-          echo "::error::build-provenance attestation verification failed for $asset ($VERSION)." \
-            "If this version predates attested releases, supply depsound-sha256; otherwise treat the asset as suspect."
-          exit 1
-        fi
-        ( cd "$dir" && case "$asset" in *.zip) unzip -oq "$asset" ;; *) tar xzf "$asset" ;; esac )
-        echo "$dir" >> "$GITHUB_PATH"
+        bash "$DEPSOUND_ACTION_PATH/.github/scripts/download-depsound.sh"
 
     - name: Detect dependency changes
       id: detect
