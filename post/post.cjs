@@ -46,6 +46,7 @@ function validatePacket(packet, version) {
       if (change.credentialsChanged !== undefined && typeof change.credentialsChanged !== 'boolean') return 'review input lock change is malformed';
       if (change.toRegistry !== undefined && (typeof change.toRegistry !== 'boolean' || change.toRegistry && change.kind !== 'version')) return 'review input registry target is malformed';
       for (const key of ['from', 'to', 'files']) {
+        if (key !== 'files' && change[key] === null) continue;
         if (change[key] !== undefined && !Array.isArray(change[key])) return 'review input lock change is malformed';
       }
       const present = value => typeof value === 'string' && value.length > 0;

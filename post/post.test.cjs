@@ -144,6 +144,54 @@ test('evidence-only and missing packet offer inspection without false replay', a
   }
 });
 
+for (const kind of ['added', 'removed']) {
+  test(`one-sided lock ${kind} preserves findings with a null source side`, async () => {
+    const source = [{ location: 'node_modules/x', resolved: 'https://mirror.test/x.tgz', host: 'mirror.test', integrity: 'sha512-x' }];
+    const lockChange = {
+      ecosystem: 'npm', name: 'x', kind,
+      ...(kind === 'added' ? { toVersion: '1.0.0', from: null, to: source } : { fromVersion: '1.0.0', from: source, to: null }),
+    };
+    const dir = fixture({
+      'meta.json': JSON.stringify(complete()),
+      'comment.md': 'Dependency source requires review: mirror.test\n<!-- depsound -->',
+      'review-input.json': JSON.stringify(bulk({ items: [{ lockChange }] })),
+    });
+    const mock = client();
+    await postReport({ ...runtime(mock.github), fs, reportDir: dir });
+    const body = mock.calls.find(([type]) => type === 'createComment')[1].body;
+    assert.match(body, /Dependency source requires review: mirror\.test/);
+    assert.match(body, /'bulk' '--file=review-input\.json'/);
+    assert.doesNotMatch(body, /analysis incomplete/);
+  });
+}
+
+test('lock changes reject null required sides and malformed optional fields', async () => {
+  const source = [{ resolved: 'https://mirror.test/x.tgz' }];
+  const valid = { ecosystem: 'npm', name: 'x', version: '1.0.0', fromVersion: '1.0.0', toVersion: '2.0.0', from: source, to: source };
+  for (const fields of [
+    { kind: 'added', to: null },
+    { kind: 'removed', from: null },
+    { kind: 'source', from: null },
+    { kind: 'source', to: null },
+    { kind: 'version', from: null },
+    { kind: 'version', to: null },
+    { kind: 'added', from: {} },
+    { kind: 'removed', to: 'invalid' },
+    { kind: 'added', from: null, files: null },
+  ]) {
+    const dir = fixture({
+      'meta.json': JSON.stringify(complete()),
+      'comment.md': 'Dependency source requires review: mirror.test\n<!-- depsound -->',
+      'review-input.json': JSON.stringify(bulk({ items: [{ lockChange: { ...valid, ...fields } }] })),
+    });
+    const mock = client();
+    await postReport({ ...runtime(mock.github), fs, reportDir: dir });
+    const body = mock.calls.find(([type]) => type === 'createComment')[1].body;
+    assert.match(body, /analysis incomplete/, JSON.stringify(fields));
+    assert.doesNotMatch(body, /Dependency source requires review/);
+  }
+});
+
 test('malformed, schema-mismatched, and version-mismatched packets are incomplete', async () => {
   for (const packet of ['{', { schema: 2, toolVersion: '0.37.0', mode: 'bulk', items: [] }, bulk({ toolVersion: '0.38.0' }), bulk({ items: [{ lockChange: true }] })]) {
     const dir = fixture({
