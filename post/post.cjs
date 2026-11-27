@@ -196,13 +196,16 @@ async function postReport({ fs, github, context, core, reportDir = 'report' }) {
   try {
     const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr, per_page: 100 });
     const existing = comments.find(comment => comment.body && comment.body.includes(marker) && comment.body.includes('<!-- depsound-title:') && comment.user && comment.user.type === 'Bot');
-    // Check after pagination, immediately before the shared comment write.
-    const current = await github.rest.pulls.get({ owner, repo, pull_number: pr });
-    if (!current.data.head || current.data.head.sha !== head) {
-      core.warning('depsound comment skipped because this report is for an older PR head.');
-    } else {
-      if (existing) await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body: finalBody });
-      else await github.rest.issues.createComment({ owner, repo, issue_number: pr, body: finalBody });
+    if (existing || !noChanges) {
+      // Check after pagination, immediately before the shared comment write.
+      const current = await github.rest.pulls.get({ owner, repo, pull_number: pr });
+      if (!current.data.head || current.data.head.sha !== head) {
+        core.warning('depsound comment skipped because this report is for an older PR head.');
+      } else if (existing) {
+        await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body: finalBody });
+      } else {
+        await github.rest.issues.createComment({ owner, repo, issue_number: pr, body: finalBody });
+      }
     }
   } catch (error) {
     failures.push(`comment: ${error.message}`);
