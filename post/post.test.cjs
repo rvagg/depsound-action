@@ -52,12 +52,15 @@ function runtime(github) {
 const complete = (extra = {}) => ({ state: 'complete', headSha: 'head', version: 'v0.37.0', title: 'depsound: flagged for review', ...extra });
 const bulk = (extra = {}) => ({ schema: 1, toolVersion: '0.37.0', mode: 'bulk', items: [{ ecosystem: 'npm', name: 'x', to: '1.0.0' }], ...extra });
 
-test('no-change creates a neutral current-head check and scoped sticky comment', async () => {
+test('no-change reports only a neutral check when the PR has no sticky comment', async () => {
   const dir = fixture({ 'meta.json': JSON.stringify({ state: 'no-changes', headSha: 'head' }) });
   const mock = client();
   await postReport({ ...runtime(mock.github), fs, reportDir: dir });
-  assert.equal(mock.calls.find(([kind]) => kind === 'createCheck')[1].head_sha, 'head');
-  assert.equal(mock.calls.some(([kind]) => kind === 'createComment'), true);
+  const check = mock.calls.find(([kind]) => kind === 'createCheck')[1];
+  assert.equal(check.head_sha, 'head');
+  assert.equal(check.conclusion, 'neutral');
+  assert.equal(check.output.title, 'depsound: no dependency changes');
+  assert.equal(mock.calls.some(([kind]) => kind === 'createComment' || kind === 'updateComment'), false);
 });
 
 test('reverting dependency changes replaces the prior flagged sticky comment', async () => {

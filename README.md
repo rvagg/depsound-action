@@ -29,9 +29,9 @@ newcomer's) it:
 If analysis cannot complete, the action posts an **"analysis incomplete"**
 comment. A missing comment from a failed run could otherwise look like approval.
 
-A no-change run creates or updates the sticky comment and neutral check, even on
-PRs without dependency changes. Reverting a dependency edit therefore replaces
-older flags. Missing or corrupt reports are incomplete runs, not no-change runs.
+If depsound finds no dependency changes, it records a neutral check without
+adding a PR comment. If the PR already has a depsound comment, it edits that
+comment in place so reviewers don't see stale findings after a revert.
 
 The PR summary, JSON and retained evidence all come from one analysis, so they
 describe the same run. If a registry later removes a release, the workflow

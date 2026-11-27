@@ -27,10 +27,10 @@ Everything else follows from it. Judge every change against these, in order:
    job produced in the same run. Collapsing the two jobs, or moving any
    package-derived processing into the post job, is the one change that can
    turn this action into the pwn-request hazard it exists to avoid.
-2. **Always speak.** A check-run alone can read as approval. Analysis posts a
-   report; failure posts "analysis incomplete". A PR without dependency changes
-   gets an explicit no-change comment and check. The check is always `neutral`,
-   never `success` or `failure`.
+2. **Report findings and failures.** Analysis posts a report; failure posts
+   "analysis incomplete". When detection finds no dependency changes, the poster
+   records the result in the check and edits the sticky comment only if one
+   already exists. The check is always `neutral`.
 3. **depsound owns the wording.** The comment body is depsound's
    `--format=markdown` output. The action adds a footer (reproduce command,
    agent hand-off, artifact link) and nothing else. Headline logic, triage
@@ -131,7 +131,7 @@ Files:
   to inspect the saved report and files instead. Evidence is never executed.
 - It adopts only a Bot-authored comment with both the depsound title and sticky
   markers. Comments are bounded in UTF-8 bytes and retain the artifact route.
-- An explicit no-change envelope still upserts a neutral check and scoped comment.
+- A no-change envelope updates the neutral check without creating a PR comment.
   The event head must match the envelope; the current PR head is checked before the comment write.
 - In the same-run layout the PR number comes from the trusted event, never
   from the artifact.
